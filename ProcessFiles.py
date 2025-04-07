@@ -292,14 +292,28 @@ def compare_files(filePath_1, filePath_2):
             )
 
 #fetch sequence of enzyme
-def fetch_sequence(filePath, line):
-    with open(filePath, "r") as file:
+def fetch_sequence(fileName, line_start):
+    fileName = "DATA\\" + fileName
+    with open(fileName, "r") as file:
         lines = file.readlines()
-        i = line
+        i = line_start
+        sequence = ""
+
+        while(i < len(lines)):
+            if len(lines[i]) == 1:
+                break
+
+            sequence = sequence + lines[i].strip().replace(" ", "")
+            i = i + 1
+
+        return sequence
 
 
 
-path1 = "DeepLearning\\DATA\\Type_I_restriction_enzymes_Gold_Standards_Protein.txt"
-path2 = "DeepLearning\\DATA\\Type_II_restriction_enzymes_Gold_Standards_Protein.txt"
-path3 = "DeepLearning\\DATA\\Type_III_restriction_enzymes_Gold_Standards_Protein.txt"
-path4 = "DeepLearning\\DATA\\Type_VI_restriction_enzymes_Gold_Standards_Protein.txt"
+
+
+path1 = "DATA\\Type_I_restriction_enzymes_Gold_Standards_Protein.txt"
+path2 = "DATA\\Type_II_restriction_enzymes_Gold_Standards_Protein.txt"
+path3 = "DATA\\Type_III_restriction_enzymes_Gold_Standards_Protein.txt"
+path4 = "DATA\\Type_VI_restriction_enzymes_Gold_Standards_Protein.txt"
+

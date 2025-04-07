@@ -131,7 +131,7 @@ class Database:
     def select_samples_data(self, select=None, enzyme=None, id=None, filename=None):
         self.connection = sqlite3.connect(self.db_path)
         self.cursor = self.connection.cursor()
-
+        columns_str = ""
         if select:
             columns_str = ", ".join(select)  # convert list to string
 
@@ -139,7 +139,7 @@ class Database:
             columns_str = "*"
 
         # query base
-        query = "SELECT * from samples WHERE 1=1"
+        query = f"SELECT {columns_str} from samples WHERE 1=1"
         param = []
 
         # append conditions dynamically

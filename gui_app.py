@@ -27,13 +27,13 @@ class App:
         self.notebook.add(self.data_tab, text="Data")
 
         self.alignment_tab = AlignmentTab(self.notebook, self.db, ProcessSimilarity())
-        self.alignment_tab.combo_file1['values'] = self.db.get_unique_filenames()
+        """self.alignment_tab.combo_file1['values'] = self.db.get_unique_filenames()
         self.alignment_tab.combo_file2['values'] = self.db.get_unique_filenames()
         all_data = self.db.get_all_samples()
         enzyme_names = sorted(set(row[1] for row in all_data))
         self.alignment_tab.combo_enzyme['values'] = enzyme_names
         self.alignment_tab.combo_enzyme1['values'] = enzyme_names
-        self.alignment_tab.combo_enzyme2['values'] = enzyme_names
+        self.alignment_tab.combo_enzyme2['values'] = enzyme_names"""
         self.notebook.add(self.alignment_tab.frame, text="Zarovnání")
 
 

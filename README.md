@@ -19,3 +19,19 @@ Tato aplikace slouží k načítání, filtrování, třídění a správě dat 
 2. Spusť aplikaci:
    ```
    python main.py
+   ```
+
+## Struktura projektu
+
+```
+.
+├── main.py
+├── gui_app.py
+├── database_manager.py
+├── group_manager.py
+├── exporter.py
+├── filter_manager.py
+├── Database.py
+├── ProcessFiles.py
+└── groups.json (vytvoří se při uložení skupin)
+```

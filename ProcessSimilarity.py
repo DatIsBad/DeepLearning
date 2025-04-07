@@ -49,7 +49,7 @@ class ProcessSimilarity:
         enzyme_2 = enzyme_2.replace(" ", "").replace("\n", "")
 
         M, N = len(enzyme_1), len(enzyme_2)
-        score_matrix = np.zeros((N + 1, M + 1))
+        score_matrix = np.zeros((M + 1, N + 1))
         pointer_matrix = [[None] * (N + 1) for _ in range(M + 1)]
         max_score = 0
         max_positions = []
@@ -221,9 +221,9 @@ class ProcessSimilarity:
     # ----------------------------------------------------------------------------------------------------
 
     # Displays a heatmap of the score matrix with the traceback path overlaid (for Needleman-Wunsch).
-    def plot_needleman_wunsch_heatmap_with_trace(self, score_matrix, pointer_matrix):
+    def plot_needleman_wunsch_heatmap_with_trace(self, score_matrix, pointer_matrix, return_fig=False):
         matrix = np.array(score_matrix)
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(6, 6))
         cax = ax.imshow(matrix, cmap="viridis", origin="upper")
         fig.colorbar(cax)
 
@@ -250,13 +250,16 @@ class ProcessSimilarity:
         ax.set_title("Needleman-Wunsch Score Matrix with Traceback Path")
         ax.set_xlabel("Sequence 2")
         ax.set_ylabel("Sequence 1")
-        plt.tight_layout()
-        plt.show()
+        
+        if return_fig:
+            return fig
+        else:
+            plt.show()
 
     # Displays a heatmap of the score matrix with the traceback path overlaid (for Smith-Waterman).
-    def plot_smith_waterman_heatmap_with_trace(self, score_matrix, trace_coords_list):
+    def plot_smith_waterman_heatmap_with_trace(self, score_matrix, trace_coords_list, return_fig=False):
         matrix = np.array(score_matrix)
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(6, 6))
         cax = ax.imshow(matrix, cmap="viridis", origin="upper")
         fig.colorbar(cax)
 
@@ -277,8 +280,11 @@ class ProcessSimilarity:
         ax.set_title("Smith-Waterman Score Matrix with Traceback Path")
         ax.set_xlabel("Sequence 2")
         ax.set_ylabel("Sequence 1")
-        plt.tight_layout()
-        plt.show()
+        
+        if return_fig:
+            return fig
+        else:
+            plt.show()
 
     def format_alignment_blast_style(self, seq1: str, seq2: str) -> str:
         """
