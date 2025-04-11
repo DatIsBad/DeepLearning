@@ -16,27 +16,34 @@ class App:
         self.filtered_data = []
 
         self.root.minsize(900, 600)
-
         self.calculate_data_ranges()
 
-        self.notebook = ttk.Notebook(self.root)
+        # Hlavní horizontální dělení (sidebar + obsah)
+        self.main_frame = ttk.Frame(self.root)
+        self.main_frame.pack(fill="both", expand=True)
+
+        # Sidebar vlevo
+        self.sidebar = ttk.Frame(self.main_frame, width=200)
+        self.sidebar.pack(side="left", fill="y")
+        self._build_group_sidebar()  # Tato metoda vytvoří obsah postranního panelu
+
+        # Content frame (obsah záložek) vpravo
+        self.content_frame = ttk.Frame(self.main_frame)
+        self.content_frame.pack(side="left", fill="both", expand=True)
+
+        # Notebook obsažený v content_frame
+        self.notebook = ttk.Notebook(self.content_frame)
         self.notebook.pack(fill="both", expand=True)
 
+        # Složka "Data" Notebooku
         self.data_tab = ttk.Frame(self.notebook)
         self.build_gui(self.data_tab)
         self.notebook.add(self.data_tab, text="Data")
 
+        # Složka "Zarovnání" Notebooku
         self.alignment_tab = AlignmentTab(self.notebook, self.db, ProcessSimilarity())
-        """self.alignment_tab.combo_file1['values'] = self.db.get_unique_filenames()
-        self.alignment_tab.combo_file2['values'] = self.db.get_unique_filenames()
-        all_data = self.db.get_all_samples()
-        enzyme_names = sorted(set(row[1] for row in all_data))
-        self.alignment_tab.combo_enzyme['values'] = enzyme_names
-        self.alignment_tab.combo_enzyme1['values'] = enzyme_names
-        self.alignment_tab.combo_enzyme2['values'] = enzyme_names"""
         self.notebook.add(self.alignment_tab.frame, text="Zarovnání")
-
-
+        
         self.update_filenames()
         self.populate_tree(self.db.get_all_samples())
 
@@ -121,7 +128,6 @@ class App:
         hsb.grid(row=1, column=0, sticky="ew")
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
-
 
     def update_length_label(self, _):
         min_val = self.length_min.get()
@@ -252,3 +258,61 @@ class App:
         for index, (val, k) in enumerate(l):
             self.tree.move(k, "", index)
         self.tree.heading(col, command=lambda: self.sort_column(col, not reverse))
+
+
+# -------------------------------------------------------------------------------------
+# Methods to work with Groups
+    def _build_group_sidebar(self):
+        label = ttk.Label(self.sidebar, text="Skupiny", font=("Arial", 10, "bold"))
+        label.pack(pady=5)
+
+        self.group_listbox = tk.Listbox(self.sidebar)
+        self.group_listbox.pack(fill="both", expand=True, padx=5)
+
+        entry_frame = ttk.Frame(self.sidebar)
+        entry_frame.pack(fill="x", padx=5, pady=5)
+
+        self.new_group_entry = ttk.Entry(entry_frame)
+        self.new_group_entry.pack(side="left", fill="x", expand=True)
+
+        add_btn = ttk.Button(entry_frame, text="+", width=3, command=self._create_new_group)
+        add_btn.pack(side="left")
+
+        self._refresh_groups()
+
+    def _create_new_group(self):
+        name = self.new_group_entry.get().strip()
+        if name:
+            self.groups.add_to_group(name, set())  # Vytvoří prázdnou skupinu
+            self.groups.save_groups()
+            self._refresh_groups()
+            self.new_group_entry.delete(0, "end")
+
+    def _refresh_groups(self):
+        self.group_listbox.delete(0, "end")
+        for name in self.groups.get_all_group_names():
+            self.group_listbox.insert("end", name)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

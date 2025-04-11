@@ -81,6 +81,8 @@ class ProcessSimilarity:
 
         return (score_matrix, pointer_matrix, max_score, max_positions)
 
+
+    # ----------------------------------------------------------------------------------------------------
     # compute scores of enzyme_1 and enzyme_2 with needleman method
     # return: (aligned_seq1, aligned_seq2, score_matrix[M][N])
     def needleman_wunsh_alignment(
@@ -115,7 +117,7 @@ class ProcessSimilarity:
         return (aligned_seq1, aligned_seq2, score_matrix[M][N])
 
     # compute scores of enzyme_1 and enzyme_2 with smith method
-    # return: [(aligned_seq1, aligned_seq2, max_score, max_score, path, coords)]
+    # return: [(aligned_seq1, aligned_seq2, max_score, max_score, path, coords)] vypočer kosinovy vzdalenosti; PCA - vizualizace ; PAMBOSOM - podobnost; lstm (6); keras
     def smith_waterman_alignment(
         self, enzyme_1, enzyme_2, match=1, mismatch=-1, gap=-2, all_maxima=True
     ):
@@ -166,6 +168,33 @@ class ProcessSimilarity:
             aligned_seq1, aligned_seq2, path, coords = traceback(i, j)
             return [(aligned_seq1, aligned_seq2, max_score, path, coords)]
 
+
+    # Levenshteinova vzdálenost (edit distance)
+    # Return: edit_distance : int
+    def levenshtein_distance_alignment(self, enzyme_1: str, enzyme_2: str) -> int:
+        enzyme_1 = enzyme_1.replace(" ", "").replace("\n", "")
+        enzyme_2 = enzyme_2.replace(" ", "").replace("\n", "")
+
+        M, N = len(enzyme_1), len(enzyme_2)
+        distance_matrix = [[0] * (N + 1) for _ in range(M + 1)]
+
+        for i in range(M + 1):
+            distance_matrix[i][0] = i
+        for j in range(N + 1):
+            distance_matrix[0][j] = j
+
+        for i in range(1, M + 1):
+            for j in range(1, N + 1):
+                cost = 0 if enzyme_1[i - 1] == enzyme_2[j - 1] else 1
+                distance_matrix[i][j] = min(
+                    distance_matrix[i - 1][j] + 1,      # odstranění
+                    distance_matrix[i][j - 1] + 1,      # vložení
+                    distance_matrix[i - 1][j - 1] + cost  # substituce
+                )
+
+        return (distance_matrix, distance_matrix[M][N])
+
+    # ----------------------------------------------------------------------------------------------------
     # Calculates alignment statistics based on aligned sequences
     # dict with keys: matches, mismatches, gaps, identity_percent, alignment_length, score
     def needleman_wunsch_stats(
@@ -215,6 +244,21 @@ class ProcessSimilarity:
             "alignment_length": length,
             "score": score,
         }
+
+
+    # Vrací statistiku podobnosti na základě Levenshteinovy vzdálenosti
+    # Return: dict with keys: edit_distance, identity_percent
+    def levenshtein_stats(self, enzyme_1: str, enzyme_2: str) -> dict:
+        edit_distance = self.levenshtein_distance(enzyme_1, enzyme_2)
+        max_len = max(len(enzyme_1), len(enzyme_2))
+        identity_percent = (1 - edit_distance / max_len) * 100 if max_len > 0 else 0.0
+
+        return {
+            "edit_distance": edit_distance,
+            "identity_percent": identity_percent,
+        }
+
+
 
     # ----------------------------------------------------------------------------------------------------
     # ----------------------------------------------------------------------------------------------------
@@ -286,6 +330,24 @@ class ProcessSimilarity:
         else:
             plt.show()
 
+    def plot_levenshtein_heatmap(self, distance_matrix, return_fig=False):
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        matrix = np.array(distance_matrix)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        cax = ax.imshow(matrix, cmap="plasma", origin="upper")
+        fig.colorbar(cax)
+
+        ax.set_title("Levenshtein Distance Matrix")
+        ax.set_xlabel("Sequence 2")
+        ax.set_ylabel("Sequence 1")
+
+        if return_fig:
+            return fig
+        else:
+            plt.show()
+
     def format_alignment_blast_style(self, seq1: str, seq2: str) -> str:
         """
         Formats the alignment of two sequences in BLAST-style alignment:
@@ -304,13 +366,4 @@ class ProcessSimilarity:
 
         return f"Query:  {seq1}\n        {match_line}\nSbjct:  {seq2}"
 
-    # visualise score matrix as heatmap
-    def visualise_hm_score_matrix(self, score_matrix):
-        # Vizualizace matice skóre
-        plt.figure(figsize=(8, 6))
-        plt.imshow(score_matrix, cmap="Blues", interpolation="nearest")
-        plt.colorbar(label="Score")
-        plt.title("Score Matrix")
-        plt.xlabel("Sequence 2")
-        plt.ylabel("Sequence 1")
-        plt.show()
+
