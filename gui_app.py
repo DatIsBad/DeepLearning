@@ -1,7 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from tkinter import filedialog
-from ProcessFiles import read_enzyme_headers
+from tkinter import filedialog, simpledialog, messagebox
+from tkinter.filedialog import asksaveasfilename
+from ProcessFiles import read_enzyme_headers, fetch_sequence
 from alignment_tab import AlignmentTab
 from ProcessSimilarity import *
 
@@ -41,7 +42,7 @@ class App:
         self.notebook.add(self.data_tab, text="Data")
 
         # Složka "Zarovnání" Notebooku
-        self.alignment_tab = AlignmentTab(self.notebook, self.db, ProcessSimilarity())
+        self.alignment_tab = AlignmentTab(self.notebook, self.db, ProcessSimilarity(), self.groups)
         self.notebook.add(self.alignment_tab.frame, text="Zarovnání")
         
         self.update_filenames()
@@ -50,14 +51,14 @@ class App:
     def build_gui(self, parent):
         self.root.title("Restrikční enzymy – databázový nástroj")
 
-        control_frame = ttk.LabelFrame(parent, text="Ovládání")
-        control_frame.pack(fill="x", padx=5, pady=5)
+        self.control_frame = ttk.LabelFrame(parent, text="Ovládání")
+        self.control_frame.pack(fill="x", padx=5, pady=5)
 
-        ttk.Button(control_frame, text="Vytvořit databázi", command=self.db.create_database).grid(row=0, column=0, padx=5)
-        ttk.Button(control_frame, text="Načíst soubor", command=self.load_file).grid(row=0, column=1, padx=5)
-        ttk.Button(control_frame, text="Reset databáze", command=self.reset_database).grid(row=0, column=2, padx=5)
-        ttk.Button(control_frame, text="Export do CSV", command=self.export_csv).grid(row=0, column=3, padx=5)
-        ttk.Button(control_frame, text="Smazat soubory", command=self.open_delete_window).grid(row=0, column=4, padx=5)
+        ttk.Button(self.control_frame, text="Vytvořit databázi", command=self.db.create_database).grid(row=0, column=0, padx=5)
+        ttk.Button(self.control_frame, text="Načíst soubor", command=self.load_file).grid(row=0, column=1, padx=5)
+        ttk.Button(self.control_frame, text="Reset databáze", command=self.reset_database).grid(row=0, column=2, padx=5)
+        ttk.Button(self.control_frame, text="Export do CSV", command=self.export_csv).grid(row=0, column=3, padx=5)
+        ttk.Button(self.control_frame, text="Smazat soubory", command=self.open_delete_window).grid(row=0, column=4, padx=5)
 
         filter_frame = ttk.LabelFrame(parent, text="Filtry")
         filter_frame.pack(fill="x", padx=10, pady=5)
@@ -67,7 +68,7 @@ class App:
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
 
-
+        self._add_group_button_to_controls()
 
         filter_top = ttk.Frame(filter_frame)
         filter_top.pack(fill="x")
@@ -262,36 +263,212 @@ class App:
 
 # -------------------------------------------------------------------------------------
 # Methods to work with Groups
-    def _build_group_sidebar(self):
-        label = ttk.Label(self.sidebar, text="Skupiny", font=("Arial", 10, "bold"))
-        label.pack(pady=5)
+    def _add_selected_to_group(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("Žádný výběr", "Nejprve vyber enzymy v tabulce.")
+            return
 
-        self.group_listbox = tk.Listbox(self.sidebar)
-        self.group_listbox.pack(fill="both", expand=True, padx=5)
+        if not hasattr(self, 'selected_group_name') or not self.selected_group_name:
+            messagebox.showinfo("Není vybraná skupina", "Nejdříve klikni na skupinu vlevo.")
+            return
 
-        entry_frame = ttk.Frame(self.sidebar)
-        entry_frame.pack(fill="x", padx=5, pady=5)
+        group_names = self.groups.get_all_group_names()
+        if not group_names:
+            messagebox.showinfo("Žádné skupiny", "Nejdříve vytvoř skupinu vlevo.")
+            return
 
-        self.new_group_entry = ttk.Entry(entry_frame)
-        self.new_group_entry.pack(side="left", fill="x", expand=True)
+        for iid in selection:
+            values = self.tree.item(iid, "values")
+            enzyme, filename, line = values[1], values[7], int(values[8])
+            sequence = fetch_sequence(filename, line)
+            temp = list(values)
+            temp.append(sequence)
+            self.groups.add_to_group(self.selected_group_name, {tuple(temp)})
 
-        add_btn = ttk.Button(entry_frame, text="+", width=3, command=self._create_new_group)
-        add_btn.pack(side="left")
-
+        self.groups.save_groups()
         self._refresh_groups()
 
-    def _create_new_group(self):
-        name = self.new_group_entry.get().strip()
+    def _add_group_button_to_controls(self):
+        btn = ttk.Button(self.control_frame, text="Přidat do skupiny", command=self._add_selected_to_group)
+        btn.grid(row=0, column=5, padx=5)
+
+    def _build_group_sidebar(self):
+        sidebar_header = ttk.Frame(self.sidebar)
+        sidebar_header.pack(fill="x", pady=5)
+
+        ttk.Label(sidebar_header, text="Skupiny", font=("Arial", 10, "bold")).pack(side="left", padx=5)
+        ttk.Button(sidebar_header, text="+", width=3, command=self._prompt_new_group).pack(side="right", padx=5)
+
+        self.group_canvas = tk.Canvas(self.sidebar, borderwidth=0)
+        self.group_frame = ttk.Frame(self.group_canvas)
+        self.group_scroll = ttk.Scrollbar(self.sidebar, orient="vertical", command=self.group_canvas.yview)
+        self.group_canvas.configure(yscrollcommand=self.group_scroll.set)
+
+        self.group_scroll.pack(side="right", fill="y")
+        self.group_canvas.pack(side="left", fill="both", expand=True)
+        self.group_canvas.create_window((0, 0), window=self.group_frame, anchor="nw")
+
+        self.group_frame.bind("<Configure>", lambda e: self.group_canvas.configure(scrollregion=self.group_canvas.bbox("all")))
+
+        self.group_widgets = {}
+        self._refresh_groups()
+
+    def _prompt_new_group(self):
+        name = simpledialog.askstring("Nová skupina", "Zadej název nové skupiny:")
         if name:
-            self.groups.add_to_group(name, set())  # Vytvoří prázdnou skupinu
+            if name in self.groups.get_all_group_names():
+                messagebox.showerror("Chyba", "Skupina s tímto názvem již existuje.")
+                return
+            self.groups.add_to_group(name, set())
             self.groups.save_groups()
             self._refresh_groups()
-            self.new_group_entry.delete(0, "end")
 
     def _refresh_groups(self):
-        self.group_listbox.delete(0, "end")
+        for widget in self.group_frame.winfo_children():
+            widget.destroy()
+
         for name in self.groups.get_all_group_names():
-            self.group_listbox.insert("end", name)
+            self._create_collapsible_group(name)
+            if hasattr(self, 'selected_group_name') and name == self.selected_group_name:
+                label_widget = self.selected_group_label
+                if label_widget:
+                    label_widget.config(background="#cce5ff", foreground="black")
+
+    def _create_collapsible_group(self, group_name):
+        def select_group():
+            if hasattr(self, 'selected_group_label') and self.selected_group_label:
+                self.selected_group_label.config(background="SystemButtonFace", foreground="black")
+            self.selected_group_name = group_name
+            self.selected_group_label = name_label
+            name_label.config(background="#00ff59", foreground="black")
+
+        container = ttk.Frame(self.group_frame)
+        container.pack(fill="x", pady=2, padx=5)
+
+        header = ttk.Frame(container)
+        header.pack(fill="x")
+
+        toggle_btn = ttk.Button(header, text="⯆", width=2)
+        toggle_btn.pack(side="left")
+
+        name_label = tk.Label(header, text=group_name, font=("Arial", 9, "bold"), anchor="w")
+        name_label.pack(side="left", fill="x", expand=True, padx=5)
+        name_label.bind("<Button-1>", lambda e: select_group())
+
+        rename_btn = ttk.Button(header, text="✎", width=2, command=lambda: self._rename_group(group_name))
+        rename_btn.pack(side="right", padx=2)
+        delete_btn = ttk.Button(header, text="🗑", width=2, command=lambda: self._delete_group(group_name))
+        delete_btn.pack(side="right", padx=2)
+        export_btn = ttk.Button(header, text="📤", width=2, command=lambda: self._export_group(group_name))
+        export_btn.pack(side="right", padx=2)
+
+        content_frame = ttk.Frame(container)
+        content_frame.pack(fill="x")
+
+        enzymes = self.groups.get_group_ids(group_name)
+        headers = ["Enzym", "Sample", "ORF", "Sekvence"]
+        table = ttk.Frame(content_frame)
+        table.pack(fill="x", padx=10)
+
+        for col, name in enumerate(headers):
+            ttk.Label(
+                table,
+                text=name,
+                font=("Arial", 9, "bold"),
+                background="#f0f0f0",
+                anchor="w",
+                padding=3
+            ).grid(row=0, column=col, sticky="nsew", padx=2, pady=1)
+
+        for row_idx, enz in enumerate(enzymes, start=1):
+            data = list(enz)[1:5] if isinstance(enz, tuple) and len(enz) >= 5 else [str(enz), "?", "?", "?"]
+            for col_idx, value in enumerate(data):
+                ttk.Label(
+                    table,
+                    text=value,
+                    anchor="w",
+                    padding=3
+                ).grid(row=row_idx, column=col_idx, sticky="nsew", padx=2, pady=1)
+            del_btn = ttk.Button(table, text="x", width=2, command=lambda e=enz, g=group_name: self._remove_enzyme_from_group(g, e))
+            del_btn.grid(row=row_idx, column=len(headers), padx=2)
+
+        def toggle():
+            if content_frame.winfo_viewable():
+                content_frame.pack_forget()
+                toggle_btn.config(text="⯈")
+            else:
+                content_frame.pack(fill="x")
+                toggle_btn.config(text="⯆")
+
+        toggle_btn.config(command=toggle)
+
+    def _remove_enzyme_from_group(self, group, enzyme):
+        self.groups.remove_from_group(group, enzyme)
+        self.groups.save_groups()
+        self._refresh_groups()
+
+    def _delete_group(self, group_name):
+        if messagebox.askyesno("Smazat skupinu", f"Opravdu chceš smazat skupinu '{group_name}'?"):
+            self.groups.remove_group(group_name)
+            self.groups.save_groups()
+            self._refresh_groups()
+
+    def _export_group(self, group_name):
+        data = self.groups.get_group_ids(group_name)
+        if not data:
+            messagebox.showinfo("Prázdná skupina", "Skupina neobsahuje žádné enzymy.")
+            return
+
+        file_path = asksaveasfilename(defaultextension=".txt", filetypes=[(f"DATA\\{group_name}", "*.txt")])
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                for item in data:
+                    if isinstance(item, tuple) and len(item) >= 10:
+                        enzyme_name = item[1]
+                        sample = item[2]
+                        orf = item[3]
+                        rec_seq = item[4]
+                        size = item[5]
+                        fragment = item[6]
+                        sequence = item[9]
+
+                        label = f">{enzyme_name}"
+                        if sample:
+                            label = f"{sample}.{enzyme_name}"
+                        if orf:
+                            label = f"{label}ORF{orf}"
+
+                        rec_seq = rec_seq or []
+                        rec_text = ", ".join(rec_seq) if isinstance(rec_seq, (list, tuple)) else str(rec_seq)
+
+                        label = f"{label}    {rec_text} {size} aa"
+                        if fragment.lower() == "true":
+                            label += " fragment"
+
+                        formatted_seq = "\n".join([" ".join([sequence[i+j:i+j+10] for j in range(0, 50, 10)]) for i in range(0, len(sequence), 50)])
+                        f.write(f"{label}\n{formatted_seq}\n\n\n")
+                    else:
+                        f.write(f">{str(item)}\n?\n")
+
+            messagebox.showinfo("Hotovo", f"Skupina '{group_name}' byla exportována.")
+        except Exception as e:
+            messagebox.showerror("Chyba při exportu", str(e))
+
+    def _rename_group(self, old_name):
+        new_name = simpledialog.askstring("Přejmenovat skupinu", "Nový název:", initialvalue=old_name)
+        if new_name and new_name != old_name:
+            if new_name in self.groups.get_all_group_names():
+                messagebox.showerror("Chyba", "Skupina s tímto názvem už existuje.")
+                return
+            members = self.groups.get_group_ids(old_name)
+            self.groups.remove_group(old_name)
+            self.groups.add_to_group(new_name, members)
+            self.groups.save_groups()
+            self._refresh_groups()
 
 
 

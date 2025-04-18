@@ -26,4 +26,12 @@ class GroupManager:
         if self.path.exists():
             with open(self.path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-                self.groups = {k: set(v) for k, v in loaded.items()}
+                self.groups = {k: set(tuple(item) if isinstance(item, list) else item for item in v) for k, v in loaded.items()}
+
+    def remove_from_group(self, group_name, enzyme):
+        if group_name in self.groups:
+            self.groups[group_name].discard(enzyme)
+
+    def remove_group(self, group_name):
+        if group_name in self.groups:
+            del self.groups[group_name]

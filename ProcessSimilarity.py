@@ -1,41 +1,53 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from Bio.Align import substitution_matrices
 
 
 class ProcessSimilarity:
     def __init__(self):
-        pass
+        # načtení BLOSUM62;
+        # toto načtení je velice náročné
+        # lepší načíst jen jednou a umožnit algoritmům použít BLOSUM62 bez čekání
+        self.blosum62 = substitution_matrices.load("BLOSUM62")
+        self.gap_penalty = -4
+
+    def get_blosum_score(self, a, b, default=-4):
+        matrix = self.blosum62
+        try:
+            return matrix[(a, b)]
+        except KeyError:
+            try:
+                return matrix[(b, a)]
+            except KeyError:
+                return default
 
     # Needleman-Wunsh (global alignment)
     # return: score_matrix : [], pointer_matrix : []
-    def needleman_wunsh_matrix(self, enzyme_1, enzyme_2, match=1, mismatch=-1, gap=-2):
-        enzyme_1 = enzyme_1.replace(" ", "").replace("\n", "")
-        enzyme_2 = enzyme_2.replace(" ", "").replace("\n", "")
+    def needleman_wunsh_matrix(self, enzyme_1, enzyme_2):
+        len_1 = len(enzyme_1) + 1
+        len_2 = len(enzyme_2) + 1
+        score_matrix = [[0] * len_2 for _ in range(len_1)]
+        pointer_matrix = [[None] * len_2 for _ in range(len_1)]
 
-        M, N = len(enzyme_1), len(enzyme_2)
-        score_matrix = [[0] * (N + 1) for _ in range(M + 1)]
-        pointer_matrix = [[None] * (N + 1) for _ in range(M + 1)]
-
-        for i in range(M + 1):
-            score_matrix[i][0] = i * gap
+        for i in range(len_1):
+            score_matrix[i][0] = i * self.gap_penalty
             pointer_matrix[i][0] = (i - 1, 0) if i > 0 else None
-        for j in range(N + 1):
-            score_matrix[0][j] = j * gap
+        for j in range(len_2):
+            score_matrix[0][j] = j * self.gap_penalty
             pointer_matrix[0][j] = (0, j - 1) if j > 0 else None
 
-        for i in range(1, M + 1):
-            for j in range(1, N + 1):
-                diag = score_matrix[i - 1][j - 1] + (
-                    match if enzyme_1[i - 1] == enzyme_2[j - 1] else mismatch
-                )
-                delete = score_matrix[i - 1][j] + gap
-                insert = score_matrix[i][j - 1] + gap
-                score = max(diag, delete, insert)
-                score_matrix[i][j] = score
+        for i in range(1, len_1):
+            for j in range(1, len_2):
+                match_score = self.get_blosum_score(enzyme_1[i - 1], enzyme_2[j - 1])
+                diag = score_matrix[i - 1][j - 1] + match_score
+                up = score_matrix[i - 1][j] + self.gap_penalty
+                left = score_matrix[i][j - 1] + self.gap_penalty
+                max_score = max(diag, up, left)
 
-                if score == diag:
+                score_matrix[i][j] = max_score
+                if max_score == diag:
                     pointer_matrix[i][j] = (i - 1, j - 1)
-                elif score == delete:
+                elif max_score == up:
                     pointer_matrix[i][j] = (i - 1, j)
                 else:
                     pointer_matrix[i][j] = (i, j - 1)
@@ -44,57 +56,48 @@ class ProcessSimilarity:
 
     # Smith-Waterman (local alignment)
     # Return: score_matrix : [], pointer_matrix : [], max_score : int, max_positions : []
-    def smith_waterman_matrix(self, enzyme_1, enzyme_2, match=1, mismatch=-1, gap=-2):
-        enzyme_1 = enzyme_1.replace(" ", "").replace("\n", "")
-        enzyme_2 = enzyme_2.replace(" ", "").replace("\n", "")
+    def smith_waterman_matrix(self, enzyme_1, enzyme_2):
+        len_1 = len(enzyme_1) + 1
+        len_2 = len(enzyme_2) + 1
+        score_matrix = [[0] * len_2 for _ in range(len_1)]
+        pointer_matrix = [[None] * len_2 for _ in range(len_1)]
 
-        M, N = len(enzyme_1), len(enzyme_2)
-        score_matrix = np.zeros((M + 1, N + 1))
-        pointer_matrix = [[None] * (N + 1) for _ in range(M + 1)]
         max_score = 0
-        max_positions = []
+        max_pos = (0, 0)
 
-        for i in range(1, M + 1):
-            for j in range(1, N + 1):
-                diag = score_matrix[i - 1][j - 1] + (
-                    match if enzyme_1[i - 1] == enzyme_2[j - 1] else mismatch
-                )
-                delete = score_matrix[i - 1][j] + gap
-                insert = score_matrix[i][j - 1] + gap
-                score = max(0, diag, delete, insert)
-                score_matrix[i][j] = score
+        for i in range(1, len_1):
+            for j in range(1, len_2):
+                match_score = self.get_blosum_score(enzyme_1[i - 1], enzyme_2[j - 1])
+                diag = score_matrix[i - 1][j - 1] + match_score
+                up = score_matrix[i - 1][j] + self.gap_penalty
+                left = score_matrix[i][j - 1] + self.gap_penalty
+                max_cell = max(0, diag, up, left)
 
-                if score == 0:
+                score_matrix[i][j] = max_cell
+                if max_cell == 0:
                     pointer_matrix[i][j] = None
-                elif score == diag:
+                elif max_cell == diag:
                     pointer_matrix[i][j] = (i - 1, j - 1)
-                elif score == delete:
+                elif max_cell == up:
                     pointer_matrix[i][j] = (i - 1, j)
                 else:
                     pointer_matrix[i][j] = (i, j - 1)
 
-                if score > max_score:
-                    max_score = score
-                    max_positions = [(i, j)]
-                elif score == max_score:
-                    max_positions.append((i, j))
+                if max_cell > max_score:
+                    max_score = max_cell
+                    max_pos = (i, j)
 
-        return (score_matrix, pointer_matrix, max_score, max_positions)
-
+        return (score_matrix, pointer_matrix, max_score, max_pos)
 
     # ----------------------------------------------------------------------------------------------------
     # compute scores of enzyme_1 and enzyme_2 with needleman method
     # return: (aligned_seq1, aligned_seq2, score_matrix[M][N])
-    def needleman_wunsh_alignment(
-        self, enzyme_1, enzyme_2, match=1, mismatch=-1, gap=-2
-    ):
+    def needleman_wunsh_alignment(self, enzyme_1, enzyme_2):
         enzyme_1 = enzyme_1.replace(" ", "").replace("\n", "")
         enzyme_2 = enzyme_2.replace(" ", "").replace("\n", "")
 
         M, N = len(enzyme_1), len(enzyme_2)
-        score_matrix, pointer_matrix = self.needleman_wunsh_matrix(
-            enzyme_1, enzyme_2, match, mismatch, gap
-        )
+        score_matrix, pointer_matrix = self.needleman_wunsh_matrix(enzyme_1, enzyme_2)
         aligned_seq1, aligned_seq2 = "", ""
         i, j = M, N
 
@@ -118,14 +121,12 @@ class ProcessSimilarity:
 
     # compute scores of enzyme_1 and enzyme_2 with smith method
     # return: [(aligned_seq1, aligned_seq2, max_score, max_score, path, coords)] vypočer kosinovy vzdalenosti; PCA - vizualizace ; PAMBOSOM - podobnost; lstm (6); keras
-    def smith_waterman_alignment(
-        self, enzyme_1, enzyme_2, match=1, mismatch=-1, gap=-2, all_maxima=True
-    ):
+    def smith_waterman_alignment(self, enzyme_1, enzyme_2, all_maxima=True):
         enzyme_1 = enzyme_1.replace(" ", "").replace("\n", "")
         enzyme_2 = enzyme_2.replace(" ", "").replace("\n", "")
 
         score_matrix, pointer_matrix, max_score, max_positions = (
-            self.smith_waterman_matrix(enzyme_1, enzyme_2, match, mismatch, gap)
+            self.smith_waterman_matrix(enzyme_1, enzyme_2)
         )
 
         def traceback(start_i, start_j):
@@ -168,7 +169,6 @@ class ProcessSimilarity:
             aligned_seq1, aligned_seq2, path, coords = traceback(i, j)
             return [(aligned_seq1, aligned_seq2, max_score, path, coords)]
 
-
     # Levenshteinova vzdálenost (edit distance)
     # Return: edit_distance : int
     def levenshtein_distance_alignment(self, enzyme_1: str, enzyme_2: str) -> int:
@@ -187,9 +187,9 @@ class ProcessSimilarity:
             for j in range(1, N + 1):
                 cost = 0 if enzyme_1[i - 1] == enzyme_2[j - 1] else 1
                 distance_matrix[i][j] = min(
-                    distance_matrix[i - 1][j] + 1,      # odstranění
-                    distance_matrix[i][j - 1] + 1,      # vložení
-                    distance_matrix[i - 1][j - 1] + cost  # substituce
+                    distance_matrix[i - 1][j] + 1,  # odstranění
+                    distance_matrix[i][j - 1] + 1,  # vložení
+                    distance_matrix[i - 1][j - 1] + cost,  # substituce
                 )
 
         return (distance_matrix, distance_matrix[M][N])
@@ -245,7 +245,6 @@ class ProcessSimilarity:
             "score": score,
         }
 
-
     # Vrací statistiku podobnosti na základě Levenshteinovy vzdálenosti
     # Return: dict with keys: edit_distance, identity_percent
     def levenshtein_stats(self, enzyme_1: str, enzyme_2: str) -> dict:
@@ -258,14 +257,14 @@ class ProcessSimilarity:
             "identity_percent": identity_percent,
         }
 
-
-
     # ----------------------------------------------------------------------------------------------------
     # ----------------------------------------------------------------------------------------------------
     # ----------------------------------------------------------------------------------------------------
 
     # Displays a heatmap of the score matrix with the traceback path overlaid (for Needleman-Wunsch).
-    def plot_needleman_wunsch_heatmap_with_trace(self, score_matrix, pointer_matrix, return_fig=False):
+    def plot_needleman_wunsch_heatmap_with_trace(
+        self, score_matrix, pointer_matrix, return_fig=False
+    ):
         matrix = np.array(score_matrix)
         fig, ax = plt.subplots(figsize=(6, 6))
         cax = ax.imshow(matrix, cmap="viridis", origin="upper")
@@ -294,14 +293,16 @@ class ProcessSimilarity:
         ax.set_title("Needleman-Wunsch Score Matrix with Traceback Path")
         ax.set_xlabel("Sequence 2")
         ax.set_ylabel("Sequence 1")
-        
+
         if return_fig:
             return fig
         else:
             plt.show()
 
     # Displays a heatmap of the score matrix with the traceback path overlaid (for Smith-Waterman).
-    def plot_smith_waterman_heatmap_with_trace(self, score_matrix, trace_coords_list, return_fig=False):
+    def plot_smith_waterman_heatmap_with_trace(
+        self, score_matrix, trace_coords_list, return_fig=False
+    ):
         matrix = np.array(score_matrix)
         fig, ax = plt.subplots(figsize=(6, 6))
         cax = ax.imshow(matrix, cmap="viridis", origin="upper")
@@ -324,7 +325,7 @@ class ProcessSimilarity:
         ax.set_title("Smith-Waterman Score Matrix with Traceback Path")
         ax.set_xlabel("Sequence 2")
         ax.set_ylabel("Sequence 1")
-        
+
         if return_fig:
             return fig
         else:
@@ -365,5 +366,6 @@ class ProcessSimilarity:
                 match_line += "."
 
         return f"Query:  {seq1}\n        {match_line}\nSbjct:  {seq2}"
+
 
 

@@ -1,79 +1,130 @@
 import tkinter as tk
 import time
 from tkinter import ttk
-from ProcessFiles import fetch_sequence
-from processProperties import protein_distribution
+from processProperties import *
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
+from matplotlib.figure import Figure
+import numpy as np
+from ProcessFiles import fetch_sequence
 
 
 class AlignmentTab:
-    def __init__(self, parent, db_manager, similarity_module):
+    def __init__(self, parent, db_manager, similarity_module, group_manager):
         self.db = db_manager
         self.sim = similarity_module
+        self.groups = group_manager
 
         self.frame = ttk.Frame(parent)
         self.frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.input_type_a = tk.StringVar(value="Soubor")
         self.input_type_b = tk.StringVar(value="Soubor")
+        
+        # Hlavní rozdělení na ovládací část (controls_frame) a výslednou tabulku (results_frame)
+        self.controls_frame = ttk.Frame(self.frame)
+        self.controls_frame.pack(fill="x")
 
+        self.results_frame = ttk.Frame(self.frame)
+        self.results_frame.pack(fill="both", expand=True)
+        
         self._tree = None
         self._seqs_a = []
         self._seqs_b = []
 
         self._build_interface()
 
+
+    # Metoda pro vytvoření ui tabu Zarovnání
     def _build_interface(self):
-        input_frame = ttk.LabelFrame(self.frame, text="Zarovnat: A proti B")
+        # -------------------- Sekce-1 (Vstupy) --------------------
+        input_frame = ttk.LabelFrame(self.controls_frame, text="Zarovnat: A proti B")
         input_frame.pack(fill="x", pady=5)
 
+        # Vstup A
+        # Soubor / Enzym / Skupina / Vlastní sekvence
         row_a = ttk.Frame(input_frame)
         row_a.pack(fill="x", pady=2)
         ttk.Label(row_a, text="Vstup A:").pack(side="left", padx=5)
-        self.combo_type_a = ttk.Combobox(row_a, textvariable=self.input_type_a, state="readonly", values=["Soubor", "Enzym", "Skupina", "Vlastní sekvence"])
+        self.combo_type_a = ttk.Combobox(
+            row_a,
+            textvariable=self.input_type_a,
+            state="readonly",
+            values=["Soubor", "Enzym", "Skupina", "Vlastní sekvence"],
+        )
         self.combo_type_a.pack(side="left")
-        self.combo_type_a.bind("<<ComboboxSelected>>", lambda e: self._update_input_widget('A'))
+        self.combo_type_a.bind(
+            "<<ComboboxSelected>>", lambda e: self._update_input_widget("A")
+        )
         self.input_widget_a = ttk.Combobox(row_a, state="readonly")
         self.input_widget_a.pack(side="left", padx=10)
 
+        # Vstup B 
+        # Soubor / Enzym / Skupina / Vlastní sekvence
         row_b = ttk.Frame(input_frame)
         row_b.pack(fill="x", pady=2)
         ttk.Label(row_b, text="Vstup B:").pack(side="left", padx=5)
-        self.combo_type_b = ttk.Combobox(row_b, textvariable=self.input_type_b, state="readonly", values=["Soubor", "Enzym", "Skupina", "Vlastní sekvence"])
+        self.combo_type_b = ttk.Combobox(
+            row_b,
+            textvariable=self.input_type_b,
+            state="readonly",
+            values=["Soubor", "Enzym", "Skupina", "Vlastní sekvence"],
+        )
         self.combo_type_b.pack(side="left")
-        self.combo_type_b.bind("<<ComboboxSelected>>", lambda e: self._update_input_widget('B'))
+        self.combo_type_b.bind(
+            "<<ComboboxSelected>>", lambda e: self._update_input_widget("B")
+        )
         self.input_widget_b = ttk.Combobox(row_b, state="readonly")
         self.input_widget_b.pack(side="left", padx=10)
 
-        algo_frame = ttk.LabelFrame(self.frame, text="Algoritmus")
+        # Algoritmy
+        # Výběr algoritmu pro výpočet zarovnání
+        algo_frame = ttk.LabelFrame(self.controls_frame, text="Algoritmus")
         algo_frame.pack(fill="x", pady=5)
         self.algo_var = tk.StringVar(value="needleman_wunsch")
-        ttk.Radiobutton(algo_frame, text="Needleman-Wunsch", variable=self.algo_var, value="needleman_wunsch").pack(side="left", padx=5)
-        ttk.Radiobutton(algo_frame, text="Smith-Waterman", variable=self.algo_var, value="smith_waterman").pack(side="left", padx=5)
+        ttk.Radiobutton(
+            algo_frame,
+            text="Needleman-Wunsch",
+            variable=self.algo_var,
+            value="needleman_wunsch",
+        ).pack(side="left", padx=5)
+        ttk.Radiobutton(
+            algo_frame,
+            text="Smith-Waterman",
+            variable=self.algo_var,
+            value="smith_waterman",
+        ).pack(side="left", padx=5)
 
-        button_frame = ttk.Frame(self.frame)
+        # Tlačítka
+        # tlačítka která spustí algoritmus pro zarovnání
+        button_frame = ttk.Frame(self.controls_frame)
         button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="Zarovnat", command=self._on_align).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Zarovnat", command=self._on_align).pack(
+            side="left", padx=5
+        )
         self.cancel_requested = False
-        ttk.Button(button_frame, text="Zrušit", command=self._cancel_alignment).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Zrušit", command=self._cancel_alignment).pack(
+            side="left", padx=5
+        )
 
+        # Progressbar
+        # bar který uživateli nějak vyzobrazí jak dlouho nám bude trvat než se všechno dopočítá
         self.progress_var = tk.DoubleVar(value=0)
-        self.progress_bar = ttk.Progressbar(self.frame, variable=self.progress_var, maximum=100)
+        self.progress_bar = ttk.Progressbar(
+            self.controls_frame, variable=self.progress_var, maximum=100
+        )
         self.progress_bar.pack(fill="x", padx=10, pady=5)
 
-        self.progress_label = ttk.Label(self.frame, text="")
+        self.progress_label = ttk.Label(self.controls_frame, text="")
         self.progress_label.pack()
 
-        self.results_frame = ttk.Frame(self.frame)
-        self.results_frame.pack(fill="both", expand=True)
+        self.table_frame = ttk.Frame(self.results_frame)
 
-        self._update_input_widget('A')
-        self._update_input_widget('B')
+        self._update_input_widget("A")
+        self._update_input_widget("B")
 
     def _update_input_widget(self, side):
-        var = self.input_type_a if side == 'A' else self.input_type_b
-        current_frame = self.input_widget_a if side == 'A' else self.input_widget_b
+        var = self.input_type_a if side == "A" else self.input_type_b
+        current_frame = self.input_widget_a if side == "A" else self.input_widget_b
         parent = current_frame.master
         current_frame.destroy()
 
@@ -87,48 +138,125 @@ class AlignmentTab:
                 enzymes = sorted(set(row[1] for row in self.db.get_all_samples()))
                 new_widget["values"] = enzymes
             elif var.get() == "Skupina":
-                new_widget["values"] = ["Skupina 1", "Skupina 2"]
+                new_widget["values"] = self.groups.get_all_group_names()
 
         new_widget.pack(side="left", padx=10)
-        if side == 'A':
+        if side == "A":
             self.input_widget_a = new_widget
         else:
             self.input_widget_b = new_widget
 
     def _cancel_alignment(self):
         self.cancel_requested = True
+        self.alignment_completed = False
 
+    def check_for_fragment(self, enzyme_name):
+        for row in self.db.get_all_samples():
+            if row[1] == enzyme_name:
+                return bool(row[6])
+        return False
+
+
+    # Metoda která spustí zarovnání na základě vstupů A a B
     def _on_align(self):
-        for widget in self.results_frame.winfo_children():
-            widget.destroy()
+        # --------------------- 
+        # Událost kliknutí na buňku v tabulce výsledků – zobrazí detailní zarovnání
+        def on_select(event):
+            # získání x a y v tabulce, pro zjištění které zarovnání bylo zvoleno
+            item = self._tree.identify_row(event.y)
+            col = self._tree.identify_column(event.x)
 
-        type_a = self.input_type_a.get()
-        type_b = self.input_type_b.get()
+            if not item or not col:
+                return
+            
+            # odečíst 1 v "col_idx" kvůli názvu sloupce, 
+            # ale tabulka má navíc i první sloupec s názvy enzymů – tedy posunout o 1 ještě dále
+            row_idx = self._tree.index(item)
+            col_idx = (
+                int(col.replace("#", "")) - 1
+            )  
+            col_idx -= 1
+            if col_idx < 0:
+                return
+            name_a, seq_a = self._seqs_a[row_idx]
 
+            # ochrana proti kliknutí mimo rozsah
+            if col_idx >= len(self._seqs_b):
+                return  
+            name_b, seq_b = self._seqs_b[col_idx]
+
+            # Zarovnání se vypočítá znovu a data se pošlou do metody _show_alignment_detail
+            # Zde se pak podrobněji vyzobrazí data o zarovnání
+            if self.algo_var.get() == "needleman_wunsch":
+                aligned1, aligned2, score = self.sim.needleman_wunsh_alignment(
+                    seq_a, seq_b
+                )
+                self._show_alignment_detail(
+                    name_a, name_b, seq_a, seq_b, aligned1, aligned2, score
+                )
+            else:
+                alignment = self.sim.smith_waterman_alignment(seq_a, seq_b)
+                score = alignment[0][2]
+                aligned1 = []
+                aligned2 = []
+                for item in alignment:
+                    aligned1.append(item[0])
+                    aligned2.append(item[1])
+
+                self._show_alignment_detail(
+                    name_a, name_b, seq_a, seq_b, aligned1, aligned2, score
+                )
+
+        # --------------------- 
+        # Metoda pro získání sekvencí podle typu vstupu
         def fetch_sequences(widget, source_type):
             if source_type == "Vlastní sekvence":
-                return [("Vlastní_A", widget.get("1.0", "end").replace("\n", "").replace(" ", "").strip())]
+                return [
+                    (
+                        "Vlastní_A",
+                        widget.get("1.0", "end")
+                        .replace("\n", "")
+                        .replace(" ", "")
+                        .strip(),
+                    )
+                ]
             elif source_type == "Soubor" or source_type == "Enzym":
                 id_ = widget.get()
-                return [(r[1], fetch_sequence(r[7], r[8])) for r in self.db.get_all_samples()
-                        if (source_type == "Soubor" and r[7] == id_) or (source_type == "Enzym" and r[1] == id_)]
+                return [
+                    (r[1], fetch_sequence(r[7], r[8]))
+                    for r in self.db.get_all_samples()
+                    if (source_type == "Soubor" and r[7] == id_)
+                    or (source_type == "Enzym" and r[1] == id_)
+                ]
             elif source_type == "Skupina":
-                return [(f"Skupina_{i}", s) for i, s in enumerate(["ATGC", "AAGC"])]
+                group_name = widget.get()
+                group_data = self.groups.get_group_ids(group_name)
+                return [
+                    (row[1], row[9])
+                    for row in group_data
+                    if isinstance(row, tuple) and len(row) >= 10
+                ]
+
             else:
                 return [("Vlastní_B", widget.get())]
 
+        # --------------------------------- _on_align
+        type_a = self.input_type_a.get()
+        type_b = self.input_type_b.get()
+        
         seqs_a = fetch_sequences(self.input_widget_a, type_a)
         seqs_b = fetch_sequences(self.input_widget_b, type_b)
 
         self._seqs_a = seqs_a
         self._seqs_b = seqs_b
 
+        # Pokud nebyl vybrán vstup A nebo B – přeruš zarovnání
         if not seqs_a or not seqs_b:
-            ttk.Label(self.results_frame, text="Musíš zadat/načíst sekvence pro oba vstupy.").pack()
             return
 
         is_single = len(seqs_a) == 1 and len(seqs_b) == 1
 
+        # Jednoduché zarovnání 1v1 – zobrazíme detail zarovnání
         if is_single:
             name_a, a = seqs_a[0]
             name_b, b = seqs_b[0]
@@ -136,54 +264,80 @@ class AlignmentTab:
                 aligned1, aligned2, score = self.sim.needleman_wunsh_alignment(a, b)
             else:
                 alignment = self.sim.smith_waterman_alignment(a, b)
-                score =  alignment[0][2]
+                score = alignment[0][2]
                 aligned1 = []
                 aligned2 = []
                 for item in alignment:
                     aligned1.append(item[0])
                     aligned2.append(item[1])
 
-
             self._show_alignment_detail(name_a, name_b, a, b, aligned1, aligned2, score)
+        
+        # Složitější zarovnání many vs many - Tabulka
         else:
-            table_frame = ttk.Frame(self.results_frame)
-            table_frame.pack(fill="both", expand=True)
+            self.table_frame.pack_forget()
+            self.table_frame.pack(fill="both", expand=True)
 
-            x_scroll = ttk.Scrollbar(table_frame, orient="horizontal")
-            y_scroll = ttk.Scrollbar(table_frame, orient="vertical")
+            x_scroll = ttk.Scrollbar(self.table_frame, orient="horizontal")
+            y_scroll = ttk.Scrollbar(self.table_frame, orient="vertical")
 
             columns = ["enzym"] + [name for name, _ in seqs_b]
-            self._tree = ttk.Treeview(
-                table_frame,
-                columns=columns,
-                show="headings",
-                xscrollcommand=x_scroll.set,
-                yscrollcommand=y_scroll.set
-            )
 
-            x_scroll.config(command=self._tree.xview)
-            y_scroll.config(command=self._tree.yview)
-            x_scroll.pack(side="bottom", fill="x")
-            y_scroll.pack(side="right", fill="y")
-            self._tree.pack(side="left", fill="both", expand=True)
+            # Vytvoření tabulky pokud ještě neexistuje
+            if not self._tree:
+                self._tree = ttk.Treeview(
+                    self.table_frame,
+                    columns=columns,
+                    show="headings",
+                    xscrollcommand=x_scroll.set,
+                    yscrollcommand=y_scroll.set,
+                )
 
-            for col in columns:
-                self._tree.heading(col, text=col)
+                x_scroll.config(command=self._tree.xview)
+                y_scroll.config(command=self._tree.yview)
+                x_scroll.pack(side="bottom", fill="x")
+                y_scroll.pack(side="right", fill="y")
+                self._tree.pack(side="left", fill="both", expand=True)
 
+                for col in columns:
+                    self._tree.heading(col, text=col)
+
+                self._tree.bind("<ButtonRelease-1>", on_select)
+
+            # Pokud tabulka už existuje, smaže všechny řádky a upraví hlavičky
+            else:
+                self._tree.delete(*self._tree.get_children())
+                self._tree["columns"] = columns
+                for col in columns:
+                    self._tree.heading(col, text=col)
+
+            # values
             total = len(seqs_a) * len(seqs_b)
             count = 0
             start_time = time.time()
 
+            # Výpočet score pro všechny kombinace A x B
+            # Pokrok lze sledovat pomocí progressbaru
             for name_a, sa in seqs_a:
                 row_scores = []
+
+                # Sleduje zda uživatel nepožádal o předběžné ukončení výpočtu zarovnání
+                if self.cancel_requested:
+                    break
+
                 for name_b, sb in seqs_b:
+                    # Sleduje zda uživatel nepožádal o předběžné ukončení výpočtu zarovnání
+                    if self.cancel_requested:
+                        break
+
+                    # Výpočet
                     if self.algo_var.get() == "needleman_wunsch":
                         _, _, score = self.sim.needleman_wunsh_alignment(sa, sb)
                     else:
                         alignment = self.sim.smith_waterman_alignment(sa, sb)
                         score = alignment[0][2] if alignment else 0
-                    if self.cancel_requested:
-                        break
+                    
+                    # Uložení do listu
                     row_scores.append(score)
                     count += 1
                     self.progress_var.set((count / total) * 100)
@@ -191,57 +345,42 @@ class AlignmentTab:
                     if count > 0:
                         est_total = elapsed / count * total
                         remaining = max(0, est_total - elapsed)
-                        self.progress_label.config(text=f"Zpracováno: {count} / {total} | Odhadovaný čas: {int(remaining)} s")
+                        self.progress_label.config(
+                            text=f"Zpracováno: {count} / {total} | Odhadovaný čas: {int(remaining)} s"
+                        )
                     self.progress_label.update()
                     self.progress_bar.update()
+                
+                # Uložení hodnot do tabulky
                 self._tree.insert("", "end", values=[name_a] + row_scores)
 
+            # Reset progress baru a výpis do popisku
             self.progress_var.set(0)
             total_elapsed = int(time.time() - start_time)
-            self.progress_label.config(text=f"Zarovnání dokončeno. Čas výpočtu: {total_elapsed} s")
+            self.progress_label.config(
+                text=f"Zarovnání dokončeno. Čas výpočtu: {total_elapsed} s"
+            )
             self.cancel_requested = False
 
-            def on_select(event):
-                item = self._tree.identify_row(event.y)
-                col = self._tree.identify_column(event.x)
-                if not item or not col:
-                    return
-                row_idx = self._tree.index(item)
-                col_idx = int(col.replace('#', '')) - 1  # odečíst 1 kvůli názvu sloupce, ale tabulka má navíc i první sloupec s názvy enzymů – tedy posunout o 1 ještě dále
-                col_idx -= 1
-                if col_idx < 0:
-                    return
-                name_a, seq_a = self._seqs_a[row_idx]
-                if col_idx >= len(self._seqs_b): return  # ochrana proti kliknutí mimo rozsah
-                name_b, seq_b = self._seqs_b[col_idx]
-
-                if self.algo_var.get() == "needleman_wunsch":
-                    aligned1, aligned2, score = self.sim.needleman_wunsh_alignment(seq_a, seq_b)
-                    self._show_alignment_detail(name_a, name_b, seq_a, seq_b, aligned1, aligned2, score)
-                else:
-                    alignment = self.sim.smith_waterman_alignment(seq_a, seq_b)
-                    score =  alignment[0][2]
-                    aligned1 = []
-                    aligned2 = []
-                    for item in alignment:
-                        aligned1.append(item[0])
-                        aligned2.append(item[1])
-                        
-                    self._show_alignment_detail(name_a, name_b, seq_a, seq_b, aligned1, aligned2, score)
-
-
-            self._tree.bind("<ButtonRelease-1>", on_select)
-
-    def _show_alignment_detail(self, name_a, name_b, seq_a, seq_b, aligned1, aligned2, score):
-        import numpy as np
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
+    # Metoda pro zobrazení detailů zarovnání dvou enzymů
+    # Nové okno zobrazí základní statistiky (shody, neshody, mezery, identita), distribuci AK,
+    # barevně zvýrazněné zarovnání a volitelnou heatmapu matic.
+    def _show_alignment_detail(
+        self, name_a, name_b, seq_a, seq_b, aligned1, aligned2, score
+    ):
+        # Výpočet základních statistik zarovnání
         matches = sum(1 for x, y in zip(aligned1, aligned2) if x == y)
-        mismatches = sum(1 for x, y in zip(aligned1, aligned2) if x != y and x != '-' and y != '-')
-        gaps = aligned1.count('-') + aligned2.count('-')
-        identity = matches / max(len(aligned1), len(aligned2)) * 100 if max(len(aligned1), len(aligned2)) > 0 else 0
+        mismatches = sum(
+            1 for x, y in zip(aligned1, aligned2) if x != y and x != "-" and y != "-"
+        )
+        gaps = aligned1.count("-") + aligned2.count("-")
+        identity = (
+            matches / max(len(aligned1), len(aligned2)) * 100
+            if max(len(aligned1), len(aligned2)) > 0
+            else 0
+        )
 
+        # Vytvoření nového okna pro zobrazení detailu zarovnání
         top = tk.Toplevel(self.frame)
         top.title(f"Detail zarovnání: {name_a} vs {name_b}")
         top.geometry("800x500")
@@ -249,22 +388,37 @@ class AlignmentTab:
         info_frame = ttk.Frame(top)
         info_frame.pack(fill="x")
 
+        # Výpis textových statistik do horní části okna
         stats_text = tk.Text(info_frame, height=10, wrap="word")
         stats_text.pack(fill="x")
         stats_text.insert("end", f"Skóre: {score}\n")
         stats_text.insert("end", f"Délka A: {len(seq_a)}, Délka B: {len(seq_b)}\n")
-        stats_text.insert("end", f"Shody: {matches}, Neshody: {mismatches}, Mezery: {gaps}\n")
+        stats_text.insert(
+            "end", f"Shody: {matches}, Neshody: {mismatches}, Mezery: {gaps}\n"
+        )
         stats_text.insert("end", f"Identita: {identity:.2f}%\n")
+
+        def protein_distribution(protein_sequence):
+            AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+            total = len(protein_sequence)
+            return [protein_sequence.count(aa) / total if total > 0 else 0 for aa in AMINO_ACIDS]
 
         dist_a = protein_distribution(seq_a)
         dist_b = protein_distribution(seq_b)
         symbols = "ACDEFGHIKLMNPQRSTVWY"
         stats_text.insert("end", "Distribuce A:\n")
-        stats_text.insert("end", ", ".join(f"{aa}:{val:.2f}" for aa, val in zip(symbols, dist_a)) + "\n")
+        stats_text.insert(
+            "end",
+            ", ".join(f"{aa}:{val:.2f}" for aa, val in zip(symbols, dist_a)) + "\n",
+        )
         stats_text.insert("end", "Distribuce B:\n")
-        stats_text.insert("end", ", ".join(f"{aa}:{val:.2f}" for aa, val in zip(symbols, dist_b)) + "\n")
+        stats_text.insert(
+            "end",
+            ", ".join(f"{aa}:{val:.2f}" for aa, val in zip(symbols, dist_b)) + "\n",
+        )
         stats_text.configure(state="disabled")
 
+        # Frame s zarovnaným textem (barveně zvýrazněné shody/neshody)
         scroll_frame = ttk.Frame(top)
         scroll_frame.pack(fill="both", expand=True)
         scroll_frame.grid_rowconfigure(0, weight=1)
@@ -278,22 +432,29 @@ class AlignmentTab:
         y_scroll.grid(row=0, column=1, sticky="ns")
         text.configure(xscrollcommand=x_scroll.set, yscrollcommand=y_scroll.set)
 
+        # Definice barev pro vizuální rozlišení shod/neshod
         text.tag_configure("match", foreground="green")
         text.tag_configure("mismatch", foreground="red")
         text.tag_configure("gap", foreground="blue")
-
+        
         if self.algo_var.get() == "needleman_wunsch":
             text.insert("end", "A: ")
             for i, (a, b) in enumerate(zip(aligned1, aligned2)):
-                tag = "match" if a == b else ("gap" if a == "-" or b == "-" else "mismatch")
+                tag = (
+                    "match"
+                    if a == b
+                    else ("gap" if a == "-" or b == "-" else "mismatch")
+                )
                 text.insert("end", a, tag)
             text.insert("end", "\nB: ")
             for i, (a, b) in enumerate(zip(aligned1, aligned2)):
-                tag = "match" if a == b else ("gap" if a == "-" or b == "-" else "mismatch")
+                tag = (
+                    "match"
+                    if a == b
+                    else ("gap" if a == "-" or b == "-" else "mismatch")
+                )
                 text.insert("end", b, tag)
-            for i, char in enumerate(aligned2):
-                tag = "match" if aligned1[i] == aligned2[i] else ("gap" if char == "-" or aligned1[i] == "-" else "mismatch")
-                text.insert("end", char, tag)
+
         else:
             text.insert("end", "Nalezené lokální sekvence (unikátní):\n")
             text.insert("end", f"{aligned1} ")
@@ -302,6 +463,7 @@ class AlignmentTab:
         heatmap_canvas = None
         heatmap_visible = False
 
+        # Metoda pro zobrazí/skrití heatmapy s trasováním zarovnání
         def toggle_heatmap():
             nonlocal heatmap_canvas, heatmap_visible
 
@@ -316,12 +478,20 @@ class AlignmentTab:
                 fig = None
 
                 if self.algo_var.get() == "needleman_wunsch":
-                    score_matrix, pointer_matrix = self.sim.needleman_wunsh_matrix(seq_a, seq_b)
-                    fig = self.sim.plot_needleman_wunsch_heatmap_with_trace(score_matrix, pointer_matrix, return_fig = True)
+                    score_matrix, pointer_matrix = self.sim.needleman_wunsh_matrix(
+                        seq_a, seq_b
+                    )
+                    fig = self.sim.plot_needleman_wunsch_heatmap_with_trace(
+                        score_matrix, pointer_matrix, return_fig=True
+                    )
 
                 else:
-                    score_matrix, pointer_matrix , max_score, max_positions = self.sim.smith_waterman_matrix(seq_a, seq_b)
-                    smith_data = self.sim.smith_waterman_alignment(seq_a, seq_b, all_maxima= True)
+                    score_matrix, pointer_matrix, max_score, max_positions = (
+                        self.sim.smith_waterman_matrix(seq_a, seq_b)
+                    )
+                    smith_data = self.sim.smith_waterman_alignment(
+                        seq_a, seq_b, all_maxima=True
+                    )
 
                     trace_coords = []
                     for item in smith_data:
@@ -329,11 +499,17 @@ class AlignmentTab:
                         trace_coords.append(item[4])
 
                     fig = Figure(figsize=(6, 4))
-                    fig = self.sim.plot_smith_waterman_heatmap_with_trace(score_matrix, trace_coords, return_fig = True)
+                    fig = self.sim.plot_smith_waterman_heatmap_with_trace(
+                        score_matrix, trace_coords, return_fig=True
+                    )
 
                 heatmap_canvas = FigureCanvasTkAgg(fig, master=top)
                 heatmap_canvas.draw()
                 heatmap_canvas.get_tk_widget().pack(fill="both", expand=True)
                 heatmap_visible = True
 
-        ttk.Button(info_frame, text="Zobrazit heatmapu", command=toggle_heatmap).pack(pady=5)
+        # tlačítko
+        ttk.Button(info_frame, text="Zobrazit heatmapu", command=toggle_heatmap).pack(
+            pady=5
+        )
+
