@@ -4,8 +4,8 @@ from tkinter import filedialog, simpledialog, messagebox
 from tkinter.filedialog import asksaveasfilename
 from ProcessFiles import read_enzyme_headers, fetch_sequence
 from alignment_tab import AlignmentTab
+from clustering_tab import ClusteringTab
 from ProcessSimilarity import *
-
 
 class App:
     def __init__(self, root, db_manager, group_manager, exporter, filter_manager):
@@ -44,6 +44,10 @@ class App:
         # Složka "Zarovnání" Notebooku
         self.alignment_tab = AlignmentTab(self.notebook, self.db, ProcessSimilarity(), self.groups)
         self.notebook.add(self.alignment_tab.frame, text="Zarovnání")
+
+        # Složka "Shlukování" Notebooku
+        self.clustering_tab = ClusteringTab(self.notebook)
+        self.notebook.add(self.clustering_tab.frame, text="Shlukování")
         
         self.update_filenames()
         self.populate_tree(self.db.get_all_samples())
@@ -57,7 +61,7 @@ class App:
         ttk.Button(self.control_frame, text="Vytvořit databázi", command=self.db.create_database).grid(row=0, column=0, padx=5)
         ttk.Button(self.control_frame, text="Načíst soubor", command=self.load_file).grid(row=0, column=1, padx=5)
         ttk.Button(self.control_frame, text="Reset databáze", command=self.reset_database).grid(row=0, column=2, padx=5)
-        ttk.Button(self.control_frame, text="Export do CSV", command=self.export_csv).grid(row=0, column=3, padx=5)
+        ttk.Button(self.control_frame, text="Export filtrované data do CSV", command=self.export_csv).grid(row=0, column=3, padx=5)
         ttk.Button(self.control_frame, text="Smazat soubory", command=self.open_delete_window).grid(row=0, column=4, padx=5)
 
         filter_frame = ttk.LabelFrame(parent, text="Filtry")

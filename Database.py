@@ -1,5 +1,5 @@
 import sqlite3
-
+import os
 
 class Database:
     def __init__(self) -> None:
@@ -7,8 +7,10 @@ class Database:
         self.schema_file = "DATABASE\create.sql"
         self.data_path = "DATA"
 
-        self.connection = sqlite3.connect(self.db_path)
-        self.cursor = self.connection.cursor()
+        if os.path.exists(self.db_path):
+            print("Database already exists.")
+        else:
+            self.create_database()
 
     def create_database(self):
         self.connection = sqlite3.connect(self.db_path)
@@ -34,7 +36,7 @@ class Database:
         )  # Disable foreign key constraints temporarily
         self.cursor.execute("BEGIN TRANSACTION;")
         tables = self.cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table';"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence';"
         ).fetchall()
 
         for table in tables:
@@ -208,3 +210,156 @@ class Database:
         enzymes = [row[0] for row in self.cursor.fetchall()]
         self.connection.close()
         return enzymes
+
+
+    # --------------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------------------
+
+    def insert_alignment(self, enzyme_a_id, enzyme_b_id, algorithm, score, aligned_seq_a, aligned_seq_b):
+        self.connection = sqlite3.connect(self.db_path)
+        self.cursor = self.connection.cursor()
+        
+        insert_query = """
+        INSERT INTO alignments (enzyme_a_id, enzyme_b_id, algorithm, score, aligned_seq_a, aligned_seq_b) 
+        VALUES (?, ?, ?, ?, ?, ?)
+        """
+
+        id_1, id_2 = sorted((enzyme_a_id, enzyme_b_id))
+
+        self.cursor.execute(insert_query, (id_1, id_2, algorithm, score))
+
+        # Commit the transaction
+        self.connection.commit()
+
+        # Close the connection
+        self.connection.close()
+
+
+    # ------------------------------------------
+    def insert_alignments_bulk(self, alignments_data):
+        self.connection = sqlite3.connect(self.db_path)
+        self.cursor = self.connection.cursor()
+        
+        insert_query = """
+        INSERT INTO alignments (enzyme_a_id, enzyme_b_id, algorithm, score, aligned_seq_a, aligned_seq_b) 
+        VALUES (?, ?, ?, ?, ?, ?)
+        """
+
+        normalized_data = [
+            (*sorted((a, b)), algo, score, aligned_seq_a, aligned_seq_b)
+            for (a, b, algo, score, aligned_seq_a, aligned_seq_b) in alignments_data
+        ]
+
+        self.cursor.executemany(insert_query, normalized_data)
+
+        # Commit the transaction
+        self.connection.commit()
+
+        # Close the connection
+        self.connection.close()
+
+
+    # ------------------------------------------
+    def select_existing_alignment_combination(self, id_pairs, algorithm):
+        # Normalizuj kombinace: (menší_id, větší_id)
+        normalized_input = set(tuple(sorted((a, b))) for a, b in id_pairs)
+
+        self.connection = sqlite3.connect(self.db_path)
+        self.cursor = self.connection.cursor()
+
+        query = "SELECT enzyme_a_id, enzyme_b_id FROM alignments WHERE algorithm = ?"
+
+        # Normalizuj i výsledky z databáze
+        existing = set(tuple(sorted((row[0], row[1]))) for row in self.cursor.fetchall())
+
+        self.cursor.execute(query, algorithm)
+
+        # Close the connection
+        self.connection.close()
+
+        return existing
+    
+
+    # ------------------------------------------
+    # Metoda která nám vrací hodnotu score daných dvojic daného algoritmu
+    def get_alignment_scores(self, id_pairs, algorithm):
+        normalized_pairs = [tuple(sorted((a, b))) for a, b in id_pairs]
+
+        if not normalized_pairs:
+            return {}
+
+        # Sestavení WHERE podmínky s mnoha OR 
+        conditions = " OR ".join(
+            "(enzyme_a_id = ? AND enzyme_b_id = ?)" for _ in normalized_pairs
+        )
+
+        query = f"""
+            SELECT enzyme_a_id, enzyme_b_id, score
+            FROM alignments
+            WHERE algorithm = ? AND ({conditions})
+        """
+
+        # Příprava parametrů
+        parameters = [algorithm]
+        for pair in normalized_pairs:
+            parameters.extend(pair)
+
+        self.connection = sqlite3.connect(self.db_path)
+        self.cursor = self.connection.cursor()
+
+        self.cursor.execute(query,parameters)
+        results = self.cursor.fetchall()
+
+        # Close the connection
+        self.connection.close()
+
+        # Výstup jako slovník {(id1, id2): score}
+        return {
+            tuple(sorted((row[0], row[1]))): row[2]
+            for row in results
+        }
+    
+
+    # ------------------------------------------
+    # Metoda která nám vrací hodnotu score daných dvojic daného algoritmu
+    def get_alignment_data(self, id_pairs, algorithm):
+        normalized_pairs = [tuple(sorted((a, b))) for a, b in id_pairs]
+
+        if not normalized_pairs:
+            return {}
+
+        # Sestavení WHERE podmínky s mnoha OR 
+        conditions = " OR ".join(
+            "(enzyme_a_id = ? AND enzyme_b_id = ?)" for _ in normalized_pairs
+        )
+
+        query = f"""
+            SELECT enzyme_a_id, enzyme_b_id, score, aligned_seq_a, aligned_seq_b
+            FROM alignments
+            WHERE algorithm = ? AND ({conditions})
+        """
+
+        # Příprava parametrů
+        parameters = [algorithm]
+        for pair in normalized_pairs:
+            parameters.extend(pair)
+
+        self.connection = sqlite3.connect(self.db_path)
+        self.cursor = self.connection.cursor()
+
+        self.cursor.execute(query,parameters)
+        results = self.cursor.fetchall()
+
+        # Close the connection
+        self.connection.close()
+
+        # Výstup jako slovník {(id1, id2): {score: ?; aligned_seq_a: ?; aligned_seq_b: ?}}
+        return {
+            tuple(sorted((row[0], row[1]))): {
+                "score": row[2],
+                "aligned_seq_a": row[3],
+                "aligned_seq_b": row[4]
+            }
+            for row in results
+        }   
+

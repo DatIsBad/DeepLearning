@@ -32,6 +32,9 @@ class ProcessProperties:
             if key in features:
                 self.features[key] = features[key]
 
+    def get_active_features(self):
+        return {k: v for k, v in self.features.items() if v}
+
     # Výpošet distribuce aminokyselin
     def protein_distribution(self, protein_sequence):
         AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
@@ -194,7 +197,7 @@ class ProcessProperties:
 
 
     #---------------------------------------------------------------------------------------------------------------
-    def plot_clusters_clean(coords, labels, title="Shlukování enzymů (čisté)"):
+    def plot_clusters_clean(self, coords, labels, title="Shlukování enzymů (čisté)"):
         fig, ax = plt.subplots(figsize=(10, 8))
         for cluster_id in np.unique(labels):
             cluster_coords = coords[labels == cluster_id]
@@ -210,11 +213,11 @@ class ProcessProperties:
         ax.legend()
         ax.grid(True)
         fig.tight_layout()
-        return fig
+        return ax
 
 
     # -------------------------------------
-    def plot_silhouette(vectors, labels):
+    def plot_silhouette(self, vectors, labels):
         silhouette_vals = silhouette_samples(vectors, labels)
         avg_score = silhouette_score(vectors, labels)
 
@@ -238,7 +241,7 @@ class ProcessProperties:
 
 
     # -------------------------------------
-    def plot_length_histogram_by_cluster(vectors, labels):
+    def plot_length_histogram_by_cluster(self, vectors, labels):
         lengths = [v[0] for v in vectors]  # Délka je na pozici 0
 
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -253,4 +256,20 @@ class ProcessProperties:
         return fig
 
 
+    # -------------------------------------
+    # -------------------------------------
+    # Metoda pro zobrazení grafu pro analízu před shlukováním
+    def plot_analysis_clean(self, pca_coords, names, x_label="PCA 1", y_label="PCA 2"):
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.scatter(pca_coords[:, 0], pca_coords[:, 1], alpha=0.7)
 
+        # Přidání štítků enzymů (volitelné)
+        for (i, (nameA, nameB)) in enumerate(names):
+            ax.annotate(f"{nameA}-{nameB}", (pca_coords[i, 0], pca_coords[i, 1]), fontsize=6)
+
+        ax.set_title("PCA vizualizace enzymových vlastností (před shlukováním)")
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        ax.grid(True)
+        fig.tight_layout()
+        return fig

@@ -209,158 +209,174 @@ class AlignmentTab:
 
         # --------------------- 
         # Metoda pro získání sekvencí podle typu vstupu
-        def fetch_sequences(widget, source_type):
+   
+        def fetch_sequences_with_ids(widget, source_type):
             if source_type == "Vlastní sekvence":
+                return [("Vlastní_A", widget.get("1.0", "end").strip().replace("\n", "").replace(" ", ""), None)]
+
+            elif source_type in ("Soubor", "Enzym"):
+                identifier = widget.get()
                 return [
-                    (
-                        "Vlastní_A",
-                        widget.get("1.0", "end")
-                        .replace("\n", "")
-                        .replace(" ", "")
-                        .strip(),
-                    )
+                    (row[1], fetch_sequence(row[7], row[8]), row[0])  # (name, sequence, id)
+                    for row in self.db.get_all_samples()
+                    if (source_type == "Soubor" and row[7] == identifier) or
+                    (source_type == "Enzym" and row[1] == identifier)
                 ]
-            elif source_type == "Soubor" or source_type == "Enzym":
-                id_ = widget.get()
-                return [
-                    (r[1], fetch_sequence(r[7], r[8]))
-                    for r in self.db.get_all_samples()
-                    if (source_type == "Soubor" and r[7] == id_)
-                    or (source_type == "Enzym" and r[1] == id_)
-                ]
+
             elif source_type == "Skupina":
                 group_name = widget.get()
                 group_data = self.groups.get_group_ids(group_name)
                 return [
-                    (row[1], row[9])
+                    (row[1], row[9], row[0])
                     for row in group_data
                     if isinstance(row, tuple) and len(row) >= 10
                 ]
 
             else:
-                return [("Vlastní_B", widget.get())]
+                return [("Vlastní_B", widget.get().strip().replace("\n", "").replace(" ", ""), None)]
+            
 
-        # --------------------------------- _on_align
+         # -----------------------------
+        
+        # Hlavní logika
         type_a = self.input_type_a.get()
         type_b = self.input_type_b.get()
-        
-        seqs_a = fetch_sequences(self.input_widget_a, type_a)
-        seqs_b = fetch_sequences(self.input_widget_b, type_b)
+        algorithm = self.algo_var.get()
 
-        self._seqs_a = seqs_a
-        self._seqs_b = seqs_b
+        seqs_a = fetch_sequences_with_ids(self.input_widget_a, type_a)
+        seqs_b = fetch_sequences_with_ids(self.input_widget_b, type_b)
+        self._seqs_a = [(n, s) for n, s, _ in seqs_a]
+        self._seqs_b = [(n, s) for n, s, _ in seqs_b]
 
-        # Pokud nebyl vybrán vstup A nebo B – přeruš zarovnání
         if not seqs_a or not seqs_b:
             return
 
         is_single = len(seqs_a) == 1 and len(seqs_b) == 1
-
-        # Jednoduché zarovnání 1v1 – zobrazíme detail zarovnání
         if is_single:
-            name_a, a = seqs_a[0]
-            name_b, b = seqs_b[0]
-            if self.algo_var.get() == "needleman_wunsch":
-                aligned1, aligned2, score = self.sim.needleman_wunsh_alignment(a, b)
+            name_a, seq_a, _ = seqs_a[0]
+            name_b, seq_b, _ = seqs_b[0]
+            if algorithm == "needleman_wunsch":
+                aligned1, aligned2, score = self.sim.needleman_wunsh_alignment(seq_a, seq_b)
             else:
-                alignment = self.sim.smith_waterman_alignment(a, b)
+                alignment = self.sim.smith_waterman_alignment(seq_a, seq_b)
                 score = alignment[0][2]
-                aligned1 = []
-                aligned2 = []
-                for item in alignment:
-                    aligned1.append(item[0])
-                    aligned2.append(item[1])
+                aligned1 = [a[0] for a in alignment]
+                aligned2 = [a[1] for a in alignment]
+            self._show_alignment_detail(name_a, name_b, seq_a, seq_b, aligned1, aligned2, score)
+            return
 
-            self._show_alignment_detail(name_a, name_b, a, b, aligned1, aligned2, score)
+        # -----------------------------
+        # Příprava kombinací pro výpočet
+        id_pairs = []
+        id_pair_to_seq = {}
+        for name_a, sa, id_a in seqs_a:
+            for name_b, sb, id_b in seqs_b:
+                if id_a is not None and id_b is not None:
+                    try:
+                        key = tuple(sorted((int(id_a), int(id_b))))
+                        id_pairs.append(key)
+                        id_pair_to_seq[key] = (sa, sb)
+                    except:
+                        continue
+
+        known_scores = self.db.get_scores_for_pairs(id_pairs, algorithm)
+        to_compute = [pair for pair in id_pairs if pair not in known_scores]
+
+        # -----------------------------
+        # Tabulka výstupu
+        self.table_frame.pack_forget()
+        self.table_frame.pack(fill="both", expand=True)
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+
+        columns = ["enzym"] + [name for name, _, _ in seqs_b]
+        self._tree = ttk.Treeview(self.table_frame, columns=columns, show="headings")
+        for col in columns:
+            self._tree.heading(col, text=col)
+        self._tree.pack(fill="both", expand=True)
+        self._tree.bind("<ButtonRelease-1>", on_select)
         
-        # Složitější zarovnání many vs many - Tabulka
+        # Vytvoření tabulky, pokud ještě neexistuje
+        columns = ["enzym"] + [name for name, _, _ in seqs_b]
+        if not self._tree:
+            self._tree = ttk.Treeview(self.table_frame, columns=columns, show="headings")
+            for col in columns:
+                self._tree.heading(col, text=col)
+            self._tree.pack(fill="both", expand=True)
+            self._tree.bind("<ButtonRelease-1>", on_select)
         else:
-            self.table_frame.pack_forget()
-            self.table_frame.pack(fill="both", expand=True)
+            self._tree.delete(*self._tree.get_children())
+            self._tree["columns"] = columns
+            for col in columns:
+                self._tree.heading(col, text=col)
 
-            x_scroll = ttk.Scrollbar(self.table_frame, orient="horizontal")
-            y_scroll = ttk.Scrollbar(self.table_frame, orient="vertical")
 
-            columns = ["enzym"] + [name for name, _ in seqs_b]
+        # -----------------------------
+        # Výpočet chybějících skóre + progressbar
+        total = len(seqs_a) * len(seqs_b)
+        count = 0
+        start_time = time.time()
+        to_insert = []
 
-            # Vytvoření tabulky pokud ještě neexistuje
-            if not self._tree:
-                self._tree = ttk.Treeview(
-                    self.table_frame,
-                    columns=columns,
-                    show="headings",
-                    xscrollcommand=x_scroll.set,
-                    yscrollcommand=y_scroll.set,
-                )
+        for name_a, sa, id_a in seqs_a:
+            row_scores = []
 
-                x_scroll.config(command=self._tree.xview)
-                y_scroll.config(command=self._tree.yview)
-                x_scroll.pack(side="bottom", fill="x")
-                y_scroll.pack(side="right", fill="y")
-                self._tree.pack(side="left", fill="both", expand=True)
+            if self.cancel_requested:
+                break
 
-                for col in columns:
-                    self._tree.heading(col, text=col)
-
-                self._tree.bind("<ButtonRelease-1>", on_select)
-
-            # Pokud tabulka už existuje, smaže všechny řádky a upraví hlavičky
-            else:
-                self._tree.delete(*self._tree.get_children())
-                self._tree["columns"] = columns
-                for col in columns:
-                    self._tree.heading(col, text=col)
-
-            # values
-            total = len(seqs_a) * len(seqs_b)
-            count = 0
-            start_time = time.time()
-
-            # Výpočet score pro všechny kombinace A x B
-            # Pokrok lze sledovat pomocí progressbaru
-            for name_a, sa in seqs_a:
-                row_scores = []
-
-                # Sleduje zda uživatel nepožádal o předběžné ukončení výpočtu zarovnání
+            for name_b, sb, id_b in seqs_b:
                 if self.cancel_requested:
                     break
 
-                for name_b, sb in seqs_b:
-                    # Sleduje zda uživatel nepožádal o předběžné ukončení výpočtu zarovnání
-                    if self.cancel_requested:
-                        break
-
-                    # Výpočet
-                    if self.algo_var.get() == "needleman_wunsch":
+                score = None
+                if id_a is not None and id_b is not None:
+                    try:
+                        key = tuple(sorted((int(id_a), int(id_b))))
+                        if key in known_scores:
+                            score = known_scores[key]
+                        else:
+                            if algorithm == "needleman_wunsch":
+                                seq1, seq2, score = self.sim.needleman_wunsh_alignment(sa, sb)
+                            else:
+                                alignment = self.sim.smith_waterman_alignment(sa, sb)
+                                seq1, seq2, score = alignment[0][0], alignment[0][1], alignment[0][2] if alignment else 0
+                            known_scores[key] = score
+                            to_insert.append((*key, algorithm, score, seq1, seq2))
+                    except:
+                        score = 0
+                else:
+                    if algorithm == "needleman_wunsch":
                         _, _, score = self.sim.needleman_wunsh_alignment(sa, sb)
                     else:
                         alignment = self.sim.smith_waterman_alignment(sa, sb)
                         score = alignment[0][2] if alignment else 0
-                    
-                    # Uložení do listu
-                    row_scores.append(score)
-                    count += 1
-                    self.progress_var.set((count / total) * 100)
-                    elapsed = time.time() - start_time
-                    if count > 0:
-                        est_total = elapsed / count * total
-                        remaining = max(0, est_total - elapsed)
-                        self.progress_label.config(
-                            text=f"Zpracováno: {count} / {total} | Odhadovaný čas: {int(remaining)} s"
-                        )
-                    self.progress_label.update()
-                    self.progress_bar.update()
-                
-                # Uložení hodnot do tabulky
-                self._tree.insert("", "end", values=[name_a] + row_scores)
 
-            # Reset progress baru a výpis do popisku
-            self.progress_var.set(0)
-            total_elapsed = int(time.time() - start_time)
-            self.progress_label.config(
-                text=f"Zarovnání dokončeno. Čas výpočtu: {total_elapsed} s"
-            )
-            self.cancel_requested = False
+                row_scores.append(score)
+                count += 1
+                self.progress_var.set((count / total) * 100)
+
+                elapsed = time.time() - start_time
+                if count > 0:
+                    est_total = elapsed / count * total
+                    remaining = max(0, est_total - elapsed)
+                    self.progress_label.config(
+                        text=f"Zpracováno: {count} / {total} | Odhadovaný čas: {int(remaining)} s"
+                    )
+                self.progress_label.update()
+                self.progress_bar.update()
+
+            self._tree.insert("", "end", values=[name_a] + row_scores)
+
+        self.progress_var.set(0)
+        self.progress_label.config(text="Zarovnání dokončeno.")
+        self.cancel_requested = False
+
+        if to_insert:
+            self.db.insert_alignments_bulk(to_insert)
+
+
+
+        
 
     # Metoda pro zobrazení detailů zarovnání dvou enzymů
     # Nové okno zobrazí základní statistiky (shody, neshody, mezery, identita), distribuci AK,
