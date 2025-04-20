@@ -46,11 +46,19 @@ class App:
         self.notebook.add(self.alignment_tab.frame, text="Zarovnání")
 
         # Složka "Shlukování" Notebooku
-        self.clustering_tab = ClusteringTab(self.notebook)
+        self.clustering_tab = ClusteringTab(
+            self.notebook,
+            self.db,
+            self.groups,
+            switch_to_alignment_tab=self._switch_to_alignment_tab
+        )
         self.notebook.add(self.clustering_tab.frame, text="Shlukování")
         
         self.update_filenames()
         self.populate_tree(self.db.get_all_samples())
+
+    def _switch_to_alignment_tab(self):
+        self.notebook.select(self.alignment_tab.frame)
 
     def build_gui(self, parent):
         self.root.title("Restrikční enzymy – databázový nástroj")
@@ -247,6 +255,8 @@ class App:
         filenames.insert(0, "(všechny)")
         self.filename_combo["values"] = filenames
         self.filename_combo.set("(všechny)")
+        if hasattr(self, "clustering_tab"):
+            self.clustering_tab.refresh_lists()
 
     def populate_tree(self, data):
         self.tree.delete(*self.tree.get_children())
@@ -473,6 +483,7 @@ class App:
             self.groups.add_to_group(new_name, members)
             self.groups.save_groups()
             self._refresh_groups()
+
 
 
 

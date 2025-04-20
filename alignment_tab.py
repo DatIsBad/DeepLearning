@@ -117,7 +117,17 @@ class AlignmentTab:
         self.progress_label = ttk.Label(self.controls_frame, text="")
         self.progress_label.pack()
 
-        self.table_frame = ttk.Frame(self.results_frame)
+        # Scrollovací rám s tabulkou
+        self.table_container = ttk.Frame(self.results_frame)
+        self.table_container.pack(fill="both", expand=True)
+
+        self.tree_scroll_y = ttk.Scrollbar(self.table_container, orient="vertical")
+        self.tree_scroll_y.pack(side="right", fill="y")
+        self.tree_scroll_x = ttk.Scrollbar(self.table_container, orient="horizontal")
+        self.tree_scroll_x.pack(side="bottom", fill="x")
+
+        self.table_frame = ttk.Frame(self.table_container)
+        self.table_frame.pack(side="left", fill="both", expand=True)
 
         self._update_input_widget("A")
         self._update_input_widget("B")
@@ -279,7 +289,12 @@ class AlignmentTab:
                     except:
                         continue
 
-        known_scores = self.db.get_scores_for_pairs(id_pairs, algorithm)
+        known_scores = {}
+        chunk_size = 400
+        for i in range(0, len(id_pairs), chunk_size):
+            chunk = id_pairs[i:i+chunk_size]
+            partial = self.db.get_scores_for_pairs(chunk, algorithm)
+            known_scores.update(partial)
         to_compute = [pair for pair in id_pairs if pair not in known_scores]
 
         # -----------------------------

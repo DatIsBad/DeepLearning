@@ -181,7 +181,7 @@ class ProcessProperties:
         names = [(entry[0], entry[1]) for entry in data_rows]
 
         if method == "kmeans":
-            model = KMeans(n_clusters=n_clusters, random_state=42)
+            model = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         elif method == "agglomerative":
             model = AgglomerativeClustering(n_clusters=n_clusters)
         else:
@@ -213,7 +213,7 @@ class ProcessProperties:
         ax.legend()
         ax.grid(True)
         fig.tight_layout()
-        return ax
+        return fig
 
 
     # -------------------------------------
