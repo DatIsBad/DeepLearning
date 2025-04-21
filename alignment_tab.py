@@ -1,11 +1,15 @@
 import tkinter as tk
 import time
-from tkinter import ttk
+import csv
+from tkinter import ttk, messagebox, filedialog
+from tkinter.filedialog import asksaveasfilename
 from processProperties import *
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import numpy as np
 from ProcessFiles import fetch_sequence
+
+        
 
 
 class AlignmentTab:
@@ -102,9 +106,8 @@ class AlignmentTab:
             side="left", padx=5
         )
         self.cancel_requested = False
-        ttk.Button(button_frame, text="Zrušit", command=self._cancel_alignment).pack(
-            side="left", padx=5
-        )
+        ttk.Button(button_frame, text="Zrušit", command=self._cancel_alignment).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Exportovat výsledky", command=self._export_alignments).pack(side="left", padx=5)
 
         # Progressbar
         # bar který uživateli nějak vyzobrazí jak dlouho nám bude trvat než se všechno dopočítá
@@ -305,19 +308,25 @@ class AlignmentTab:
             widget.destroy()
 
         columns = ["enzym"] + [name for name, _, _ in seqs_b]
-        self._tree = ttk.Treeview(self.table_frame, columns=columns, show="headings")
+        self._tree = ttk.Treeview(self.table_frame, columns=columns, show="headings", yscrollcommand=self.tree_scroll_y.set, xscrollcommand=self.tree_scroll_x.set,)
         for col in columns:
             self._tree.heading(col, text=col)
         self._tree.pack(fill="both", expand=True)
+        self.tree_scroll_y.config(command=self._tree.yview)
+        self.tree_scroll_x.config(command=self._tree.xview)
+
         self._tree.bind("<ButtonRelease-1>", on_select)
         
         # Vytvoření tabulky, pokud ještě neexistuje
         columns = ["enzym"] + [name for name, _, _ in seqs_b]
         if not self._tree:
-            self._tree = ttk.Treeview(self.table_frame, columns=columns, show="headings")
+            self._tree = ttk.Treeview(self.table_frame, columns=columns, show="headings", yscrollcommand=self.tree_scroll_y.set, xscrollcommand=self.tree_scroll_x.set,)
             for col in columns:
                 self._tree.heading(col, text=col)
             self._tree.pack(fill="both", expand=True)
+            self.tree_scroll_y.config(command=self._tree.yview)
+            self.tree_scroll_x.config(command=self._tree.xview)
+
             self._tree.bind("<ButtonRelease-1>", on_select)
         else:
             self._tree.delete(*self._tree.get_children())
@@ -396,6 +405,82 @@ class AlignmentTab:
     # Metoda pro zobrazení detailů zarovnání dvou enzymů
     # Nové okno zobrazí základní statistiky (shody, neshody, mezery, identita), distribuci AK,
     # barevně zvýrazněné zarovnání a volitelnou heatmapu matic.
+    def _export_alignments(self):
+        
+
+        if not self._tree or not self._tree.get_children():
+            messagebox.showwarning("Chyba", "Žádná data k exportu.")
+            return
+
+        filepath = asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV soubory", "*.csv")],
+            title="Uložit výsledky zarovnání"
+        )
+        if not filepath:
+            return
+
+        try:
+            with open(filepath, mode="w", newline="", encoding="utf-8") as file:
+                writer = csv.writer(file)
+                writer.writerow(self._tree["columns"])
+                for item in self._tree.get_children():
+                    row = self._tree.item(item)["values"]
+                    writer.writerow(row)
+            messagebox.showinfo("Hotovo", "Výsledky byly úspěšně exportovány.")
+        except Exception as e:
+            messagebox.showerror("Chyba", str(e))
+
+
+    def _export_alignment_detail_append(self, name_a, name_b, score, identity, aligned1, aligned2):
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV soubory", "*.csv")],
+            title="Vyber nebo vytvoř CSV soubor"
+        )
+        if not filepath:
+            return
+
+        try:
+            with open(filepath, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Enzym A", "Enzym B", "Skóre", "Identita"])
+                writer.writerow([name_a, name_b, score, f"{identity:.2f}%"])
+                writer.writerow([])
+                writer.writerow(["Zarovnání A"])
+                writer.writerow(["".join(aligned1)])
+                writer.writerow(["Zarovnání B"])
+                writer.writerow(["".join(aligned2)])
+                writer.writerow([])
+            messagebox.showinfo("Export úspěšný", f"Zarovnání bylo přidáno do souboru: {filepath}")
+        except Exception as e:
+            messagebox.showerror("Chyba při exportu", str(e))
+
+
+    def _export_alignment_detail(self, name_a, name_b, score, identity, aligned1, aligned2):
+        from tkinter.filedialog import asksaveasfilename
+        import csv
+        filepath = asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV soubory", "*.csv")],
+            title="Uložit detail zarovnání"
+        )
+        if not filepath:
+            return
+        try:
+            with open(filepath, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Enzym A", "Enzym B", "Skóre", "Identita"])
+                writer.writerow([name_a, name_b, score, f"{identity:.2f}%"])
+                writer.writerow([])
+                writer.writerow(["Zarovnání A"])
+                writer.writerow(["".join(aligned1)])
+                writer.writerow(["Zarovnání B"])
+                writer.writerow(["".join(aligned2)])
+        except Exception as e:
+            messagebox.showerror("Chyba exportu", str(e))
+
+
     def _show_alignment_detail(
         self, name_a, name_b, seq_a, seq_b, aligned1, aligned2, score
     ):
@@ -540,7 +625,7 @@ class AlignmentTab:
                 heatmap_visible = True
 
         # tlačítko
-        ttk.Button(info_frame, text="Zobrazit heatmapu", command=toggle_heatmap).pack(
-            pady=5
-        )
+        ttk.Button(info_frame, text="Zobrazit heatmapu", command=toggle_heatmap).pack(pady=5)
+        ttk.Button(info_frame, text="Exportovat detail", command=lambda: self._export_alignment_detail(name_a, name_b, score, identity, aligned1, aligned2)).pack(pady=5)
+        ttk.Button(info_frame, text="Exportovat a přidat do souboru", command=lambda: self._export_alignment_detail_append(name_a, name_b, score, identity, aligned1, aligned2)).pack(pady=5)
 
