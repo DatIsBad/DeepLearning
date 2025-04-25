@@ -1,229 +1,303 @@
-from typing import List, Tuple, Dict  # typová kontrola
-from ProcessFiles import fetch_sequence
-from collections import Counter
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split, Subset
+from sklearn.metrics import classification_report
+from sklearn.model_selection import StratifiedShuffleSplit
+import numpy as np
+from typing import List, Tuple
+from Bio.SeqUtils.ProtParam import ProteinAnalysis
+from collections import Counter, defaultdict
+from database_manager import DatabaseManager
+from ProcessFiles import fetch_sequence
+import random
+import json
 
 
+import os
 
+# Třída pro zpracování predikcí restrikčních míst z proteinových sekvencí
+# Obsahuje tokenizaci, dataset, model, trénování, evaluaci a predikci
 class ProcessPrediction:
-    def __init__(self, db_manager):
-        self.db = db_manager
-        self.motif_to_label: Dict[str, int] = {}
-        self.label_to_motif: Dict[int, str] = {}
-        self.amino_to_idx = self._build_amino_index()
+    # Inicializuje správce databáze, cestu k modelu a připraví kontejnerové proměnné
+    def __init__(self, db: DatabaseManager, model_path: str = "MODEL\\my_model.pth"):
+        self.db = db
+        self.model_path = model_path
+        self.tokenizer = None
+        self.dataset = None
+        self.label_to_motif = None
+        self.model = None
+      
+    # Tokenizace proteinových sekvencí pomocí k-merů (např. 3-mer)
+    class KmerTokenizer:
+        def __init__(self, k=3):
+            self.k = k
+            self.vocab = {"<PAD>": 0}
 
-    # ------------------- DATASET -------------------
+                # Vytvoří slovník nejčastějších k-merů z trénovacích sekvencí
+        def build_vocab(self, sequences: List[str], max_vocab_size=5000):
+            kmer_counts = defaultdict(int)
+            for seq in sequences:
+                for i in range(len(seq) - self.k + 1):
+                    kmer = seq[i:i+self.k]
+                    kmer_counts[kmer] += 1
 
-    def _build_amino_index(self) -> Dict[str, int]:
-        amino_acids = "ACDEFGHIKLMNPQRSTVWY"  # běžné aminokyseliny
-        return {aa: idx + 1 for idx, aa in enumerate(amino_acids)}  # 0 = padding
+            sorted_kmers = sorted(kmer_counts.items(), key=lambda x: x[1], reverse=True)
+            for idx, (kmer, _) in enumerate(sorted_kmers[:max_vocab_size-1], start=1):
+                self.vocab[kmer] = idx
 
+            print(f"[Tokenizer] Vocab size: {len(self.vocab)}")
 
-    # Extrahuje dvojice (proteinová sekvence, DNA motiv) ze záznamů v databázi.
-    def extract_protein_motif_pairs(self, filename:None) -> List[Tuple[str, str]]:
-        pairs = []
-        for row in self.db.get_samples_by_filename(filename):
-            motif = row[4]  # rec_sequence – rozpoznávací DNA sekvence (motiv)
-            if not motif or len(motif) < 3:
-                continue
+                # Zakóduje vstupní sekvenci na číselný vektor pomocí k-mer tokenizace
+        def encode(self, seq: str, max_len: int) -> List[int]:
+            tokens = [seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]
+            encoded = [self.vocab.get(tok, 0) for tok in tokens[:max_len]]
+            return encoded + [0] * (max_len - len(encoded))
+        
+        
+    # Dataset přizpůsobený pro PyTorch - uchovává zakódované sekvence a cílové motivy
+    class ProteinMotifDataset(Dataset):
+        def __init__(self, sequences: List[str], motifs: List[str], tokenizer, max_len: int = 128):
+            self.tokenizer = tokenizer
+            self.max_len = max_len
+            self.motif_to_label = {motif: idx for idx, motif in enumerate(sorted(set(motifs)))}
+            self.label_to_motif = {idx: motif for motif, idx in self.motif_to_label.items()}
 
-            file = row[7]
-            line = row[8]
+            self.X_seq = [self.tokenizer.encode(seq, self.max_len) for seq in sequences]
+            self.y = [self.motif_to_label[m] for m in motifs]
 
-            try:
-                protein_seq = fetch_sequence(file, line)
-                if not protein_seq or len(protein_seq) < 30:
-                    continue
-                pairs.append((protein_seq, motif))
-            except Exception as e:
-                print(f"Chyba při načítání {file}:{line} - {e}")
-                continue
+        # Vrací délku datasetu
+        def __len__(self):
+            return len(self.y)
 
-        return pairs
-    
+        # Vrací jeden vzorek (sekvence, štítek) pro daný index
+        def __getitem__(self, idx):
+            return torch.tensor(self.X_seq[idx], dtype=torch.long), torch.tensor(self.y[idx], dtype=torch.long)
 
-    def prepare_classification_dataset(self, max_len: int = 500, top_n: int = 100) -> Tuple[np.ndarray, np.ndarray]:
-        pairs = self.extract_protein_motif_pairs()
+    # Transformer model pro klasifikaci motivů z proteinových sekvencí
+    class BertLight(nn.Module):
+        def __init__(self, vocab_size=1024, embed_dim=128, num_heads=4, hidden_dim=256, num_classes=10, max_len=128):
+            super().__init__()
+            self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
+            nn.init.xavier_uniform_(self.embedding.weight)
+            self.layer_norm = nn.LayerNorm(embed_dim)
+            self.pos_embedding = nn.Parameter(torch.randn(1, max_len, embed_dim))
+            encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dim_feedforward=hidden_dim, batch_first=True)
+            self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
+            self.classifier = nn.Sequential(
+                nn.Linear(embed_dim, 128),
+                nn.ReLU(),
+                nn.Linear(128, num_classes)
+            )
 
-        # Sečti frekvence motivů
-        counter = Counter(motif for _, motif in pairs)  # spočítá kolikrát se každý motiv v datech vyskytuje.
-        most_common = counter.most_common(top_n)        # dostanu 100(defaunt) nejvíce objevovaných rozpoznávacích sekvencí
-        selected_motifs = set(m for m, _ in most_common)
-
-        # Mapování motiv <-> label
-        self.motif_to_label = {motif: idx for idx, (motif, _) in enumerate(most_common)}
-        self.label_to_motif = {idx: motif for motif, idx in self.motif_to_label.items()}
-
-        X = []  #seznam proteinových sekvencí
-        y = []
-
-        for protein_seq, motif in pairs:
-            if motif not in self.motif_to_label:
-                continue
-
-            # Sekvenci převedeme na indexy aminokyselin
-            indices = [self.amino_to_idx.get(aa, 0) for aa in protein_seq[:max_len]]
-            indices += [0] * (max_len - len(indices))  # doplnění nul
-
-            X.append(indices)
-            y.append(self.motif_to_label[motif])
-
-        return (np.array(X), np.array(y))
-    
-
-
-    # ------------------- Pytorch -------------------
-    
-    def train_pytorch_model(
-        self,
-        X: np.ndarray,  # seznam proteinových sekvencí (zakódovaných jako čísla) z prepare_classification_dataset
-        y: np.ndarray,  # seznam integer štítků odpovídajících motivům
-        max_len: int,   # maximální délka vstupní sekvence (použito při paddingu)
-        num_classes: int,  # počet možných výstupních tříd (motivů)
-        epochs: int = 6,  # počet trénovacích epoch
-        batch_size: int = 32  # velikost dávky při tréninku
-    ):
-        # Zjistí, zda je dostupná GPU akcelerace. Pokud ano, použije cuda, jinak cpu
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-        # -------------------------------
-        # Dataset obalující vstupní data a labely (nutné pro DataLoader z Pytorch)
-        class ProteinDataset(Dataset):
-            def __init__(self, data, labels):
-                self.data = torch.tensor(data, dtype=torch.long)        # vstupní sekvence
-                self.labels = torch.tensor(labels, dtype=torch.long)    # odpovídající labely
-
-            def __len__(self):
-                return len(self.data)
-
-            def __getitem__(self, idx):
-                return self.data[idx], self.labels[idx]
+        # Definuje průchod dat modelem (embedding → transformer → klasifikace)
+        def forward(self, x):
+            x = self.embedding(x) + self.pos_embedding[:, :x.size(1), :]
+            x = self.layer_norm(x)
+            x = self.transformer(x)
+            x = x.mean(dim=1)
+            return self.classifier(x)
 
 
-        # Architektura modelu: Embedding → LSTM → Dense → Výstup
-        class MotifClassifier(nn.Module):
-            def __init__(self, vocab_size, embed_dim, hidden_dim, num_classes):
-                super().__init__()
+    # Trénuje model na trénovacích datech a sleduje výkon na validačních datech
+    # Argumenty:
+    #   epochs – počet epoch
+    #   batch_size – velikost batchů
+    #   lr – learning rate
+    #   patience – počet epoch bez zlepšení pro early stopping
+    def train_model(self, epochs=50, batch_size=32, lr=0.0005, patience=10):
+        train_loader = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(self.val_dataset, batch_size=batch_size)
 
-                # Vstupní vrstva: každé číslo (aminokyselina) se převede na vektor
-                self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
-                # Obousměrné LSTM – sleduje kontext sekvence z obou směrů
-                self.lstm = nn.LSTM(embed_dim, hidden_dim, batch_first=True, bidirectional=True)
-                # Skrytá plně propojená vrstva
-                self.fc1 = nn.Linear(hidden_dim * 2, 128)
-                # Výstupní vrstva: počet neuronů = počet tříd (motivů)
-                self.fc2 = nn.Linear(128, num_classes)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        criterion = nn.CrossEntropyLoss()
 
-            def forward(self, x):
-                x = self.embedding(x)                   # 1) Embedding
-                _, (h_n, _) = self.lstm(x)              # 2) LSTM – výstup = skrytý stav obou směrů
-                h = torch.cat((h_n[0], h_n[1]), dim=1)  # 3) Spojení směrů do jednoho vektoru
-                x = F.relu(self.fc1(h))                 # 4) Aktivace přes ReLU
-                return self.fc2(x)                      # 5) Výstupní logity pro každou třídu
-            
+        best_val_acc = 0.0
+        patience_counter = 0
+        label_counts = Counter([label for _, label in self.train_dataset])
+        print("Rozložení tříd v trénovacích datech:")
+        for label, count in label_counts.items():
+            print(f"  Třída {label}: {count} vzorků")
 
-        # -------------------------------
-        dataset = ProteinDataset(X, y)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)   # Dávkovač dat pro mini-batch trénink
-
-        model = MotifClassifier(vocab_size=len(self.amino_to_idx) + 1, embed_dim=64, hidden_dim=64, num_classes=num_classes).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)       # Optimalizátor a ztrátová funkce
-        criterion = nn.CrossEntropyLoss()                               # pro vícetřídovou klasifikaci
-
-
-        # Vstup do trénovacího režimu
-        model.train()
+            # Přepneme zpět do trénovacího režimu
+            self.model.train()
         for epoch in range(epochs):
             total_loss = 0
             correct = 0
-
-            # Mini-batch tréninková smyčka
-            for batch_x, batch_y in dataloader:
-                # Přesuň vstup a výstup na správné zařízení (CPU/GPU); device bylo nastaveno na začátku metody
-                batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+            total = 0
 
 
-                optimizer.zero_grad()               # Reset gradientů
-                outputs = model(batch_x)            # Forward průchod modelem
-                loss = criterion(outputs, batch_y)  # Výpočet ztráty
-                loss.backward()                     # Zpětná propagace (výpočet gradientů)
-                optimizer.step()                    # Aktualizace vah podle gradientů
+            # Procházíme jednotlivé batch-e trénovacích dat
+            for batch_idx, (seqs, labels) in enumerate(train_loader):
+                if batch_idx % 10 == 0:
+                    print(f"  Batch {batch_idx+1}/{len(train_loader)}")
+                # Nuluje gradienty před zpětnou propagací
+                optimizer.zero_grad()
+                outputs = self.model(seqs)
+                # Vypočítá ztrátu mezi predikcemi a reálnými štítky
+                loss = criterion(outputs, labels)
+                # Zpětná propagace chyby
+                loss.backward()
+                # Aktualizace vah modelu
+                optimizer.step()
 
                 total_loss += loss.item()
-                correct += (outputs.argmax(dim=1) == batch_y).sum().item()  # Počet správně klasifikovaných vzorků
+                pred = outputs.argmax(dim=1)
+                correct += (pred == labels).sum().item()
+                total += len(labels)
 
-            # Výpočet přesnosti za epochu
-            acc = correct / len(dataset)
-            print(f"Epoch {epoch+1}/{epochs} - Loss: {total_loss:.4f} - Accuracy: {acc:.4f}")
+            acc = correct / total * 100
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss: {total_loss:.4f} | Train Acc: {acc:.2f}%")
 
-        return model
+            # Přepneme model do evaluačního režimu
+            self.model.eval()
+            all_preds = []
+            all_labels = []
+            with torch.no_grad():
+                for seqs, labels in val_loader:
+                    outputs = self.model(seqs)
+                    preds = outputs.argmax(dim=1)
+                    all_preds.extend(preds.tolist())
+                    all_labels.extend(labels.tolist())
+
+            report = classification_report(all_labels, all_preds, zero_division=0, output_dict=True)
+            val_acc = report['accuracy'] * 100
+            print(f"Validation accuracy: {val_acc:.2f}%")
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print("Early stopping triggered.")
+                    break
+            self.model.train()
+
+
+    # Načte sekvence a motivy z databáze, předzpracuje je a vytvoří tokenizer a dataset
+    # Argumenty:
+    #   filenames – volitelný seznam názvů souborů
+    #   min_len – minimální délka sekvence
+    #   only_full – True = vynechá fragmenty
+    #   top_n – počet nejčastějších motivů, které ponecháme
+    def extract_data_from_db(self, filenames=None, min_len=50, only_full=False, top_n=30):
+        data = []
+        if filenames:
+            for file in filenames:
+                data.extend(self.db.get_samples_by_filename(file))
+        else:
+            data = self.db.get_all_samples()
+
+        records = []
+        for row in data:
+            motif = row[4]
+            if not motif or len(motif) < 4:
+                continue
+            seq = fetch_sequence(row[7], row[8])
+            if not seq or len(seq) < min_len:
+                continue
+            if only_full and row[6] == 1:
+                continue
+            records.append((seq, motif))
+
+        motifs = [m for _, m in records]
+        common = set([m for m, _ in Counter(motifs).most_common(top_n)])
+        records = [(s, m) for s, m in records if m in common]
+
+        if not records:
+            raise ValueError("Nebyly nalezeny dostatečné motivy pro trénink.")
+
+        sequences = [s for s, m in records]
+        motifs = [m for s, m in records]
+        self.tokenizer = ProcessPrediction.KmerTokenizer(k=3)
+        self.tokenizer.build_vocab(sequences, max_vocab_size=1024)
+        self.dataset = ProcessPrediction.ProteinMotifDataset(sequences, motifs, self.tokenizer, max_len=128)
+        self.label_to_motif = self.dataset.label_to_motif
+        return sequences, motifs
+
+
+    # Načte model z uloženého .pth souboru do self.model
+    # Načte model z disku a inicializuje architekturu na základě tokenizeru a počtu tříd
+    def load_model(self):
+        if self.tokenizer is None or self.label_to_motif is None:
+            raise ValueError("Nejdříve zavolej extract_data_from_db(), aby bylo možné vytvořit model.")
+        self.model = ProcessPrediction.BertLight(
+            vocab_size=len(self.tokenizer.vocab),
+            num_classes=len(self.label_to_motif),
+            max_len=128
+        )
+        self.model.load_state_dict(torch.load(self.model_path))
+        print(f"Model načten ze souboru '{self.model_path}'.")
+
+
+    # Uloží model a mapu štítků (label_to_motif) do souboru
+    # Uloží model a label-to-motif mapu na disk, pro pozdější predikci nebo nasazení
+    def save_model(self):
+        if self.model is None:
+            raise ValueError("Model není inicializovaný. Nejprve ho natrénuj.")
+        torch.save(self.model.state_dict(), self.model_path)
+        with open("label_to_motif.json", "w", encoding="utf-8") as f:
+            json.dump(self.label_to_motif, f, indent=4)
+        print(f"Model a label mapa uloženy do '{self.model_path}' a 'label_to_motif.json'.")
 
 
 
-    # ------------------- Work -------------------
-    # Predikuje motiv pro zadanou proteinovou sekvenci pomocí natrénovaného modelu
-    def predict_motif(self, protein_sequence: str, model, max_len: int) -> str:
-        model.eval()
-        device = next(model.parameters()).device
+    # Rozdělí dataset na trénovací a validační část pomocí stratifikovaného dělení
+    def split_dataset(self, test_ratio: float = 0.2, random_state: int = 42):
+        if self.dataset is None:
+            raise ValueError("Dataset nebyl inicializován. Nejprve zavolej extract_data_from_db().")
 
-        # Převeď sekvenci na indexy a doplň na max_len
-        indices = [self.amino_to_idx.get(aa, 0) for aa in protein_sequence[:max_len]]
-        indices += [0] * (max_len - len(indices))
+        labels = [label for _, label in self.dataset]
+        splitter = StratifiedShuffleSplit(n_splits=1, test_size=test_ratio, random_state=random_state)
+        train_idx, val_idx = next(splitter.split(np.zeros(len(labels)), labels))
 
-        input_tensor = torch.tensor([indices], dtype=torch.long).to(device)
+        self.train_dataset = Subset(self.dataset, train_idx)
+        self.val_dataset = Subset(self.dataset, val_idx)
+        print(f"Dataset rozdělen: {len(train_idx)} trénovacích, {len(val_idx)} validačních vzorků.")
+
+
+    # Vyhodnotí model na validačních datech a vypíše metriky
+    # Spustí vyhodnocení modelu na validačních datech
+    # Výsledkem je klasifikační report (přesnost, F1, atd.)
+    def evaluate(self):
+        if self.val_dataset is None:
+            raise ValueError("Validační dataset není k dispozici. Zavolej nejprve split_dataset().")
+
+        loader = DataLoader(self.val_dataset, batch_size=32)
+        self.model.eval()
+        all_preds = []
+        all_labels = []
+
         with torch.no_grad():
-            output = model(input_tensor)
+            for seqs, labels in loader:
+                outputs = self.model(seqs)
+                preds = outputs.argmax(dim=1)
+                all_preds.extend(preds.tolist())
+                all_labels.extend(labels.tolist())
+
+        report = classification_report(all_labels, all_preds, zero_division=0)
+        print("Vyhodnocení na validačním datasetu:")
+        print(report)
+
+
+    # Vrátí predikovaný motiv na základě vstupní sekvence pomocí modelu
+    # Argumenty:
+    #   sequence – vstupní proteinová sekvence
+    #   max_len – maximální délka sekvence po zakódování
+    def predict(self, sequence: str, max_len: int = 128):
+        # Vrací predikovaný motiv pro danou proteinovou sekvenci.
+        if self.model is None:
+            self.model = ProcessPrediction.BertLight(
+                vocab_size=len(self.tokenizer.vocab),
+                num_classes=len(self.label_to_motif),
+                max_len=max_len
+            )
+            self.model.load_state_dict(torch.load(self.model_path))
+
+        self.model.eval()
+        encoded = self.tokenizer.encode(sequence, max_len)
+        tensor = torch.tensor(encoded, dtype=torch.long).unsqueeze(0)
+
+        with torch.no_grad():
+            output = self.model(tensor)
             pred_label = output.argmax(dim=1).item()
-
-        return self.label_to_motif.get(pred_label, "Neznámý")
-
-    # Uloží PyTorch model na disk pod zadaným názvem souboru
-    def save_model(self, model, path: str):
-        torch.save(model.state_dict(), path)
-
-    # Načte model ze souboru a vrátí ho připravený k použití
-    def load_model(self, path: str, max_len: int, num_classes: int):
-        class MotifClassifier(nn.Module):
-            def __init__(self, vocab_size, embed_dim, hidden_dim, num_classes):
-                super().__init__()
-                self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
-                self.lstm = nn.LSTM(embed_dim, hidden_dim, batch_first=True, bidirectional=True)
-                self.fc1 = nn.Linear(hidden_dim * 2, 128)
-                self.fc2 = nn.Linear(128, num_classes)
-
-            def forward(self, x):
-                x = self.embedding(x)
-                _, (h_n, _) = self.lstm(x)
-                h = torch.cat((h_n[0], h_n[1]), dim=1)
-                x = F.relu(self.fc1(h))
-                return self.fc2(x)
-
-        model = MotifClassifier(vocab_size=len(self.amino_to_idx) + 1, embed_dim=64, hidden_dim=64, num_classes=num_classes)
-        model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-        model.eval()
-        return model
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            return self.label_to_motif.get(pred_label, "UNKNOWN")

@@ -5,7 +5,10 @@ from tkinter.filedialog import asksaveasfilename
 from ProcessFiles import read_enzyme_headers, fetch_sequence
 from alignment_tab import AlignmentTab
 from clustering_tab import ClusteringTab
+from prediction_tab import PredictionTab
 from ProcessSimilarity import *
+
+
 
 class App:
     def __init__(self, root, db_manager, group_manager, exporter, filter_manager):
@@ -54,6 +57,17 @@ class App:
         )
         self.notebook.add(self.clustering_tab.frame, text="Shlukování")
         
+        # Složka "Predikce" Notebooku
+        self.prediction_tab  = PredictionTab(
+            self.notebook,
+            self.db,
+            self.groups
+        )
+        self.notebook.add(self.prediction_tab.frame, text="Predikce sekvencí")
+
+
+
+
         self.update_filenames()
         self.populate_tree(self.db.get_all_samples())
 
