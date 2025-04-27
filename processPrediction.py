@@ -11,6 +11,7 @@ from database_manager import DatabaseManager
 from ProcessFiles import fetch_sequence
 import random
 import json
+from pathlib import Path
 
 
 import os
@@ -19,7 +20,7 @@ import os
 # Obsahuje tokenizaci, dataset, model, trénování, evaluaci a predikci
 class ProcessPrediction:
     # Inicializuje správce databáze, cestu k modelu a připraví kontejnerové proměnné
-    def __init__(self, db: DatabaseManager, model_path: str = "MODEL\\my_model.pth"):
+    def __init__(self, db: DatabaseManager, model_path: str = "MODEL\\dump\\my_model.pth"):
         self.db = db
         self.model_path = model_path
         self.tokenizer = None
@@ -184,13 +185,14 @@ class ProcessPrediction:
         if filenames:
             for file in filenames:
                 data.extend(self.db.get_samples_by_filename(file))
+
         else:
             data = self.db.get_all_samples()
 
         records = []
         for row in data:
             motif = row[4]
-            if not motif or len(motif) < 4:
+            if not motif or len(motif) < 3:
                 continue
             seq = fetch_sequence(row[7], row[8])
             if not seq or len(seq) < min_len:
@@ -199,45 +201,85 @@ class ProcessPrediction:
                 continue
             records.append((seq, motif))
 
+        print(f"{len(records)}--------------------------------------------------------")
+
         motifs = [m for _, m in records]
         common = set([m for m, _ in Counter(motifs).most_common(top_n)])
         records = [(s, m) for s, m in records if m in common]
 
+        # Filtrujeme motivy s alespoň 2 výskyty
+        motif_counts = Counter(m for s, m in records)
+        records = [(s, m) for s, m in records if motif_counts[m] >= 2]
+
+        print(f"{len(records)}--------------------------------------------------------")
         if not records:
             raise ValueError("Nebyly nalezeny dostatečné motivy pro trénink.")
 
+
         sequences = [s for s, m in records]
         motifs = [m for s, m in records]
+
+
         self.tokenizer = ProcessPrediction.KmerTokenizer(k=3)
         self.tokenizer.build_vocab(sequences, max_vocab_size=1024)
         self.dataset = ProcessPrediction.ProteinMotifDataset(sequences, motifs, self.tokenizer, max_len=128)
         self.label_to_motif = self.dataset.label_to_motif
+
         return sequences, motifs
 
 
     # Načte model z uloženého .pth souboru do self.model
     # Načte model z disku a inicializuje architekturu na základě tokenizeru a počtu tříd
     def load_model(self):
-        if self.tokenizer is None or self.label_to_motif is None:
-            raise ValueError("Nejdříve zavolej extract_data_from_db(), aby bylo možné vytvořit model.")
+        model_dir = Path(self.model_path).parent
+
+        if not (model_dir / "model.pth").exists():
+            raise FileNotFoundError(f"Model {self.model_path} neexistuje.")
+
+        # Načti tokenizer vocab
+        try:
+            with open(model_dir / "tokenizer_vocab.json", "r", encoding="utf-8") as f:
+                vocab = json.load(f)
+            self.tokenizer = ProcessPrediction.KmerTokenizer(k=3)
+            self.tokenizer.vocab = vocab
+            print("Tokenizer vocab načten.")
+        except Exception as e:
+            raise ValueError(f"Chyba při načítání tokenizer_vocab.json: {e}")
+
+        # Načti label_to_motif
+        try:
+            with open(model_dir / "label_to_motif.json", "r", encoding="utf-8") as f:
+                self.label_to_motif = json.load(f)
+            self.label_to_motif = {int(k): v for k, v in self.label_to_motif.items()}
+            print("Label mapa načtena.")
+        except Exception as e:
+            raise ValueError(f"Chyba při načítání label_to_motif.json: {e}")
+
+        # Inicializuj model
         self.model = ProcessPrediction.BertLight(
             vocab_size=len(self.tokenizer.vocab),
             num_classes=len(self.label_to_motif),
             max_len=128
         )
-        self.model.load_state_dict(torch.load(self.model_path))
+        self.model.load_state_dict(torch.load(model_dir / "model.pth"))
         print(f"Model načten ze souboru '{self.model_path}'.")
+
+
+
 
 
     # Uloží model a mapu štítků (label_to_motif) do souboru
     # Uloží model a label-to-motif mapu na disk, pro pozdější predikci nebo nasazení
-    def save_model(self):
-        if self.model is None:
-            raise ValueError("Model není inicializovaný. Nejprve ho natrénuj.")
-        torch.save(self.model.state_dict(), self.model_path)
-        with open("label_to_motif.json", "w", encoding="utf-8") as f:
+    def save_model(self, model_name: str):
+        save_path = Path("MODEL") / model_name
+        save_path.mkdir(parents=True, exist_ok=True)
+        torch.save(self.model.state_dict(), save_path / "model.pth")
+        with open(save_path / "label_to_motif.json", "w", encoding="utf-8") as f:
             json.dump(self.label_to_motif, f, indent=4)
-        print(f"Model a label mapa uloženy do '{self.model_path}' a 'label_to_motif.json'.")
+        with open(save_path / "tokenizer_vocab.json", "w", encoding="utf-8") as f:
+            json.dump(self.tokenizer.vocab, f, indent=4)
+        print(f"Model uložen do {save_path}")
+
 
 
 
@@ -284,19 +326,11 @@ class ProcessPrediction:
     #   sequence – vstupní proteinová sekvence
     #   max_len – maximální délka sekvence po zakódování
     def predict(self, sequence: str, max_len: int = 128):
-        # Vrací predikovaný motiv pro danou proteinovou sekvenci.
         if self.model is None:
-            self.model = ProcessPrediction.BertLight(
-                vocab_size=len(self.tokenizer.vocab),
-                num_classes=len(self.label_to_motif),
-                max_len=max_len
-            )
-            self.model.load_state_dict(torch.load(self.model_path))
-
+            raise ValueError("Model není načtený.")
         self.model.eval()
         encoded = self.tokenizer.encode(sequence, max_len)
         tensor = torch.tensor(encoded, dtype=torch.long).unsqueeze(0)
-
         with torch.no_grad():
             output = self.model(tensor)
             pred_label = output.argmax(dim=1).item()

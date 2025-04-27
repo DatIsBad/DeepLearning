@@ -358,10 +358,6 @@ class App:
 
         for name in self.groups.get_all_group_names():
             self._create_collapsible_group(name)
-            if hasattr(self, 'selected_group_name') and name == self.selected_group_name:
-                label_widget = self.selected_group_label
-                if label_widget:
-                    label_widget.config(background="#cce5ff", foreground="black")
 
     def _create_collapsible_group(self, group_name):
         def select_group():
