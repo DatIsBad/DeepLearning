@@ -80,7 +80,7 @@ class App:
         self.control_frame = ttk.LabelFrame(parent, text="Ovládání")
         self.control_frame.pack(fill="x", padx=5, pady=5)
 
-        ttk.Button(self.control_frame, text="Vytvořit databázi", command=self.db.create_database).grid(row=0, column=0, padx=5)
+        #ttk.Button(self.control_frame, text="Vytvořit databázi", command=self.db.create_database).grid(row=0, column=0, padx=5)
         ttk.Button(self.control_frame, text="Načíst soubor", command=self.load_file).grid(row=0, column=1, padx=5)
         ttk.Button(self.control_frame, text="Reset databáze", command=self.reset_database).grid(row=0, column=2, padx=5)
         ttk.Button(self.control_frame, text="Export filtrované data do CSV", command=self.export_csv).grid(row=0, column=3, padx=5)
