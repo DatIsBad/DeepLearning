@@ -63,7 +63,7 @@ class ProcessSimilarity:
         pointer_matrix = [[None] * len_2 for _ in range(len_1)]
 
         max_score = 0
-        max_pos = (0, 0)
+        max_positions = []  # ← změna: list všech maxim
 
         for i in range(1, len_1):
             for j in range(1, len_2):
@@ -85,9 +85,12 @@ class ProcessSimilarity:
 
                 if max_cell > max_score:
                     max_score = max_cell
-                    max_pos = (i, j)
+                    max_positions = [(i, j)]  # ← nový nejlepší bod, resetujeme seznam
+                elif max_cell == max_score:
+                    max_positions.append((i, j))  # ← další bod se stejným skóre
 
-        return (score_matrix, pointer_matrix, max_score, max_pos)
+        return (score_matrix, pointer_matrix, max_score, max_positions)
+
 
     # ----------------------------------------------------------------------------------------------------
     # compute scores of enzyme_1 and enzyme_2 with needleman method

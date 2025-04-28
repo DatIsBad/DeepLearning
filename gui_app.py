@@ -362,7 +362,11 @@ class App:
     def _create_collapsible_group(self, group_name):
         def select_group():
             if hasattr(self, 'selected_group_label') and self.selected_group_label:
-                self.selected_group_label.config(background="SystemButtonFace", foreground="black")
+                try:
+                    self.selected_group_label.config(background="SystemButtonFace", foreground="black")
+                except tk.TclError:
+                    # Label už neexistuje, tak ho ignorujeme
+                    self.selected_group_label = None
             self.selected_group_name = group_name
             self.selected_group_label = name_label
             name_label.config(background="#00ff59", foreground="black")
