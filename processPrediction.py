@@ -201,7 +201,7 @@ class ProcessPrediction:
                 continue
             records.append((seq, motif))
 
-        print(f"{len(records)}--------------------------------------------------------")
+        
 
         motifs = [m for _, m in records]
         common = set([m for m, _ in Counter(motifs).most_common(top_n)])
@@ -211,7 +211,7 @@ class ProcessPrediction:
         motif_counts = Counter(m for s, m in records)
         records = [(s, m) for s, m in records if motif_counts[m] >= 2]
 
-        print(f"{len(records)}--------------------------------------------------------")
+        
         if not records:
             raise ValueError("Nebyly nalezeny dostatečné motivy pro trénink.")
 
@@ -335,3 +335,38 @@ class ProcessPrediction:
             output = self.model(tensor)
             pred_label = output.argmax(dim=1).item()
             return self.label_to_motif.get(pred_label, "UNKNOWN")
+        
+
+
+    def auto_train(self, model_name = "TestModel_2" , top_n = 30):
+        sequences, motifs = self.extract_data_from_db(
+        min_len=30,   # minimální délka sekvence
+        top_n= top_n    # ponecháme top 100 nejčastějších motivů (upraveno dle požadavku)
+        )
+        print(f"✅ Načteno {len(sequences)} sekvencí.")
+
+        # 4. Rozdělení na trénovací a validační sadu
+        self.split_dataset(test_ratio=0.2)
+
+        # 5. Vytvoření modelu
+        self.model = ProcessPrediction.BertLight(
+            vocab_size=len(self.tokenizer.vocab),
+            num_classes=len(self.label_to_motif),
+            max_len=128
+        )
+
+        # 6. Trénink modelu
+        print("⏳ Trénuji model...")
+        self.train_model(
+            epochs=100,        # počet epoch
+            batch_size=32,    # velikost batchů
+            lr=0.0002,        # learning rate
+            patience=20        # early stopping
+        )
+
+        # 7. Vyhodnocení modelu
+        print("📈 Vyhodnocení modelu:")
+        self.evaluate()
+
+        # 8. Uložení modelu
+        self.save_model(model_name)

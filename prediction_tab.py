@@ -17,17 +17,28 @@ class PredictionTab:
         top_frame = ttk.LabelFrame(self.frame, text="Výběr modelu a režimu")
         top_frame.pack(fill="x", padx=10, pady=10)
         
-        # Model selection
+        # Model selection + Train button
         ttk.Label(top_frame, text="Model:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        self.model_menu = ttk.Combobox(top_frame, textvariable=self.model_var, values=self._get_model_folders(), state="readonly")
-        self.model_menu.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
         
+        model_train_frame = ttk.Frame(top_frame)
+        model_train_frame.grid(row=0, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
+        model_train_frame.columnconfigure(0, weight=3)
+        model_train_frame.columnconfigure(1, weight=1)
+
+        self.model_menu = ttk.Combobox(model_train_frame, textvariable=self.model_var, values=self._get_model_folders(), state="readonly")
+        self.model_menu.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+
+        self.train_button = ttk.Button(model_train_frame, text="Vytrénovat model", command=self._train_model)
+        self.train_button.grid(row=0, column=1, sticky="ew")
+
         # Mode selection
         ttk.Label(top_frame, text="Režim:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.mode_menu = ttk.Combobox(top_frame, textvariable=self.mode_var, values=["Vlastní sekvence", "Skupina enzymů", "Soubor"], state="readonly")
-        self.mode_menu.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
+        self.mode_menu.grid(row=1, column=1, sticky="ew", padx=5, pady=5, columnspan=2)
+
         self.mode_menu.bind("<<ComboboxSelected>>", self._update_input_visibility)
         top_frame.columnconfigure(1, weight=1)
+        top_frame.columnconfigure(2, weight=1)
 
         # Input data section
         input_frame = ttk.LabelFrame(self.frame, text="Vstupní data")
@@ -54,7 +65,7 @@ class PredictionTab:
         self.predict_button.pack(fill="x", pady=5)
 
         # Scrollable output for prediction results
-        output_frame = ttk.LabelFrame(self.frame, text="Výsledky predikce")
+        output_frame = ttk.LabelFrame(self.frame, text="Výsledky predikce / Tréninku")
         output_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.output_text = tk.Text(output_frame, wrap="word")
@@ -64,6 +75,7 @@ class PredictionTab:
         scrollbar.pack(side="right", fill="y")
 
         self.output_text.config(yscrollcommand=scrollbar.set)
+
 
     def _get_model_folders(self):
         model_dir = "MODEL"
@@ -131,6 +143,35 @@ class PredictionTab:
                     result = self.predictor.predict(seq)
                     results.append(f"{sample[1]}: {result}")
 
-        # Write results to output_text
         self.output_text.delete("1.0", "end")
         self.output_text.insert("1.0", "\n".join(results))
+
+    def _train_model(self):
+        model_folder = self.model_var.get()
+        if not model_folder:
+            self.output_text.delete("1.0", "end")
+            self.output_text.insert("1.0", "⚠️ Vyber model pro trénink.")
+            return
+
+        model_path = os.path.join("MODEL", model_folder, "model.pth")
+        self.predictor = ProcessPrediction(self.db, model_path=model_path)
+
+        # Chytrý výběr top_n podle velikosti databáze
+        total_sequences = len(self.db.get_all_samples())
+        if total_sequences > 500:
+            top_n = 35
+        elif total_sequences > 300:
+            top_n = 20
+        elif total_sequences > 150:
+            top_n = 10
+        else:
+            top_n = 5
+
+        self.output_text.delete("1.0", "end")
+        self.output_text.insert("1.0", f"Trénuji model '{model_folder}' s top_n={top_n}...\n")
+
+        try:
+            self.predictor.auto_train(model_name=model_folder, top_n=top_n)
+            self.output_text.insert("end", "✅ Trénink dokončen a model uložen.")
+        except Exception as e:
+            self.output_text.insert("end", f"❌ Chyba při tréninku: {str(e)}")
