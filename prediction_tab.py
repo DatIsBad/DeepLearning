@@ -16,33 +16,54 @@ class PredictionTab:
     def _build_interface(self):
         top_frame = ttk.LabelFrame(self.frame, text="Výběr modelu a režimu")
         top_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Model selection
         ttk.Label(top_frame, text="Model:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
         self.model_menu = ttk.Combobox(top_frame, textvariable=self.model_var, values=self._get_model_folders(), state="readonly")
         self.model_menu.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+        
+        # Mode selection
         ttk.Label(top_frame, text="Režim:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.mode_menu = ttk.Combobox(top_frame, textvariable=self.mode_var, values=["Vlastní sekvence", "Skupina enzymů", "Soubor"], state="readonly")
         self.mode_menu.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
         self.mode_menu.bind("<<ComboboxSelected>>", self._update_input_visibility)
         top_frame.columnconfigure(1, weight=1)
 
+        # Input data section
         input_frame = ttk.LabelFrame(self.frame, text="Vstupní data")
         input_frame.pack(fill="x", padx=10, pady=10)
+
         self.seq_input = tk.Text(input_frame, height=4, width=80)
         self.seq_input.pack(fill="x", padx=5, pady=5)
+
         self.group_var = tk.StringVar()
         self.group_menu = ttk.Combobox(input_frame, textvariable=self.group_var, values=self.groups.get_all_group_names(), state="readonly")
         self.group_menu.pack(fill="x", padx=5, pady=5)
+
         self.file_var = tk.StringVar()
         self.file_menu = ttk.Combobox(input_frame, textvariable=self.file_var, values=self.db.get_unique_filenames(), state="readonly")
         self.file_menu.pack(fill="x", padx=5, pady=5)
+
         self._update_input_visibility()
 
+        # Predict button
         bottom_frame = ttk.Frame(self.frame)
         bottom_frame.pack(fill="x", padx=10, pady=10)
+
         self.predict_button = ttk.Button(bottom_frame, text="Predikuj", command=self._run_prediction)
         self.predict_button.pack(fill="x", pady=5)
-        self.output_label = ttk.Label(self.frame, text="Výsledky se objeví zde.", justify="left", wraplength=800)
-        self.output_label.pack(fill="both", padx=10, pady=10)
+
+        # Scrollable output for prediction results
+        output_frame = ttk.LabelFrame(self.frame, text="Výsledky predikce")
+        output_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.output_text = tk.Text(output_frame, wrap="word")
+        self.output_text.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(output_frame, command=self.output_text.yview)
+        scrollbar.pack(side="right", fill="y")
+
+        self.output_text.config(yscrollcommand=scrollbar.set)
 
     def _get_model_folders(self):
         model_dir = "MODEL"
@@ -63,56 +84,53 @@ class PredictionTab:
             self.file_menu.pack(fill="x", padx=5, pady=5)
 
     def _run_prediction(self):
-        # Získat vybraný název modelové složky
         model_folder = self.model_var.get()
         if not model_folder:
-            self.output_label.config(text="⚠️ Vyber model.")
+            self.output_text.delete("1.0", "end")
+            self.output_text.insert("1.0", "⚠️ Vyber model.")
             return
 
-        # Sestavit plnou cestu k model.pth uvnitř složky modelu
         model_path = os.path.join("MODEL", model_folder, "model.pth")
-
-        # Vytvořit instanci ProcessPrediction s nastaveným modelem
         self.predictor = ProcessPrediction(self.db, model_path=model_path)
         self.predictor.load_model()
 
-        # Získat režim vstupu
         mode = self.mode_var.get()
+        results = []
 
         if mode == "Vlastní sekvence":
             seq = self.seq_input.get("1.0", "end").strip()
             if seq:
                 result = self.predictor.predict(seq)
-                self.output_label.config(text=f"Predikovaný motiv: {result}")
+                results.append(f"Predikovaný motiv: {result}")
             else:
-                self.output_label.config(text="⚠️ Zadejte sekvenci.")
+                results.append("⚠️ Zadejte sekvenci.")
 
         elif mode == "Skupina enzymů":
             group = self.group_var.get()
             if not group:
-                self.output_label.config(text="⚠️ Vyber skupinu.")
-                return
-            results = []
-            ids = self.groups.get_group_ids(group)
-            for enzyme_id in ids:
-                if isinstance(enzyme_id, tuple):
-                    enzyme_id = enzyme_id[0]  # vezme první prvek z tuple
-                samples = self.db.get_samples_by_id(enzyme_id)
-                for sample in samples:
-                    seq = sample[3]  # Ověř, že 4. sloupec je sekvence!
-                    result = self.predictor.predict(seq)
-                    results.append(f"{sample[1]}: {result}")
-            self.output_label.config(text="\n".join(results))
+                results.append("⚠️ Vyber skupinu.")
+            else:
+                ids = self.groups.get_group_ids(group)
+                for enzyme_id in ids:
+                    if isinstance(enzyme_id, tuple):
+                        enzyme_id = enzyme_id[0]
+                    samples = self.db.get_samples_by_id(enzyme_id)
+                    for sample in samples:
+                        seq = sample[3]
+                        result = self.predictor.predict(seq)
+                        results.append(f"{sample[1]}: {result}")
 
         elif mode == "Soubor":
             filename = self.file_var.get()
             if not filename:
-                self.output_label.config(text="⚠️ Vyber soubor.")
-                return
-            samples = self.db.get_samples_by_filename(filename)
-            results = []
-            for sample in samples:
-                seq = sample[3]  # Opět, 4. sloupec je sekvence
-                result = self.predictor.predict(seq)
-                results.append(f"{sample[1]}: {result}")
-            self.output_label.config(text="\n".join(results))
+                results.append("⚠️ Vyber soubor.")
+            else:
+                samples = self.db.get_samples_by_filename(filename)
+                for sample in samples:
+                    seq = sample[3]
+                    result = self.predictor.predict(seq)
+                    results.append(f"{sample[1]}: {result}")
+
+        # Write results to output_text
+        self.output_text.delete("1.0", "end")
+        self.output_text.insert("1.0", "\n".join(results))
