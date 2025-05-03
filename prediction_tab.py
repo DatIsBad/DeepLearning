@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk
 import os
 from processPrediction import ProcessPrediction
+from ProcessFiles import fetch_sequence
+
 
 class PredictionTab:
     def __init__(self, parent, db, group_manager):
@@ -128,7 +130,9 @@ class PredictionTab:
                         enzyme_id = enzyme_id[0]
                     samples = self.db.get_samples_by_id(enzyme_id)
                     for sample in samples:
-                        seq = sample[3]
+                        filepath = sample[7]
+                        line = sample[8]
+                        seq = fetch_sequence(filepath, line)
                         result = self.predictor.predict(seq)
                         results.append(f"{sample[1]}: {result}")
 
@@ -139,9 +143,12 @@ class PredictionTab:
             else:
                 samples = self.db.get_samples_by_filename(filename)
                 for sample in samples:
-                    seq = sample[3]
+                    filepath = sample[7]
+                    line = sample[8]
+                    seq = fetch_sequence(filepath, line)
                     result = self.predictor.predict(seq)
                     results.append(f"{sample[1]}: {result}")
+
 
         self.output_text.delete("1.0", "end")
         self.output_text.insert("1.0", "\n".join(results))
@@ -159,13 +166,13 @@ class PredictionTab:
         # Chytrý výběr top_n podle velikosti databáze
         total_sequences = len(self.db.get_all_samples())
         if total_sequences > 500:
-            top_n = 35
+            top_n = 30
         elif total_sequences > 300:
-            top_n = 20
+            top_n = 25
         elif total_sequences > 150:
-            top_n = 10
+            top_n = 15
         else:
-            top_n = 5
+            top_n = 10
 
         self.output_text.delete("1.0", "end")
         self.output_text.insert("1.0", f"Trénuji model '{model_folder}' s top_n={top_n}...\n")

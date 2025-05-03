@@ -6,7 +6,7 @@ from sklearn.metrics import silhouette_samples, silhouette_score
 import matplotlib.pyplot as plt
 from collections import Counter
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
-
+from typing import List, Tuple
 
 
 class ProcessProperties:
@@ -104,19 +104,46 @@ class ProcessProperties:
     
         
     # Metoda pro generaci vektoru z tabulky v záložce Zarovnání
-    def generate_vector_matrix_from_alignment(self, alignment_results):
-        result = []
-        for nameA, nameB, score, seqA, seqB, isFragA, isFragB in alignment_results:
-            alignment_vec = [score] if self.features["alignment_score"] else []
-            vecA = self.enrich_vector(seqA, alignment_vec, isFragA)
-            vecB = self.enrich_vector(seqB, alignment_vec, isFragB)
-            combined = vecA + vecB
-            result.append((nameA, nameB, combined))
-        return result
+    def generate_vector_matrix_from_enzymes(self, enzyme_data, db_manager=None, alignment_algo="needleman_wunsch"):
+        results = []
+
+        id_map = {}  # name → id
+        if db_manager:
+            for name, seq, is_frag in enzyme_data:
+                rows = db_manager.get_samples_by_enzyme(name)
+                if rows:
+                    id_map[name] = rows[0][0]  # předpokládáme: id = row[0]
+
+        # Pokud je alignment_score aktivní → načti z databáze
+        scores = {}
+        if self.features["alignment_score"] and db_manager:
+            enzyme_names = [name for name, _, _ in enzyme_data]
+            ids = [id_map.get(name) for name in enzyme_names if name in id_map]
+            id_pairs = [(a, b) for a in ids for b in ids if a != b]
+            alignment_data = db_manager.get_scores_for_pairs(id_pairs, alignment_algo)
+
+            score_accumulator = {id_: [] for id_ in ids}
+            for (id1, id2), score in alignment_data.items():
+                score_accumulator[id1].append(score)
+                score_accumulator[id2].append(score)
+
+            # Převod na průměr
+            for name, _, _ in enzyme_data:
+                eid = id_map.get(name)
+                values = score_accumulator.get(eid, [])
+                avg = sum(values) / len(values) if values else 0
+                scores[name] = [avg]
+
+        for name, seq, is_fragment in enzyme_data:
+            alignment_vec = scores.get(name, [])
+            vector = self.enrich_vector(seq, alignment_vec, is_fragment)
+            results.append((name, vector))
+
+        return results
 
 
     # metoda pro získání statistik o vypracovaném výslledku shlukovacího algiritmu 
-    def get_cluster_statistics(labels, vectors, pca_variance):
+    def get_cluster_statistics(self, labels, vectors, pca_variance):
         counts = Counter(labels)
         silhouette = silhouette_score(vectors, labels)
         total_explained = sum(pca_variance[:2])
@@ -178,7 +205,7 @@ class ProcessProperties:
     #    - původní vektory vlastností (např. pro další analýzy)
     def prepare_and_cluster(self, data_rows, n_clusters=5, method="kmeans"):
         vectors = [entry[2] for entry in data_rows]
-        names = [(entry[0], entry[1]) for entry in data_rows]
+        names = [entry[0] for entry in data_rows]  
 
         if method == "kmeans":
             model = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
@@ -197,16 +224,20 @@ class ProcessProperties:
 
 
     #---------------------------------------------------------------------------------------------------------------
-    def plot_clusters_clean(self, coords, labels, title="Shlukování enzymů (čisté)"):
+    def plot_clusters_clean(self, coords, labels, names=None, title="Shlukování enzymů (čisté)"):
         fig, ax = plt.subplots(figsize=(10, 8))
         for cluster_id in np.unique(labels):
             cluster_coords = coords[labels == cluster_id]
+            cluster_names = [names[i] for i in range(len(labels)) if labels[i] == cluster_id] if names else None
             ax.scatter(
                 cluster_coords[:, 0],
                 cluster_coords[:, 1],
                 label=f"Shluk {cluster_id}",
                 alpha=0.7
             )
+            if names:
+                for i, name in enumerate(cluster_names):
+                    ax.annotate(str(name), (cluster_coords[i, 0], cluster_coords[i, 1]), fontsize=6, alpha=0.6)
         ax.set_title(title)
         ax.set_xlabel("PCA 1")
         ax.set_ylabel("PCA 2")
@@ -214,6 +245,7 @@ class ProcessProperties:
         ax.grid(True)
         fig.tight_layout()
         return fig
+
 
 
     # -------------------------------------

@@ -346,7 +346,7 @@ class ProcessPrediction:
         print(f"✅ Načteno {len(sequences)} sekvencí.")
 
         # 4. Rozdělení na trénovací a validační sadu
-        self.split_dataset(test_ratio=0.2)
+        self.split_dataset(test_ratio = max(3, int(0.2 * top_n)))
 
         # 5. Vytvoření modelu
         self.model = ProcessPrediction.BertLight(
@@ -358,10 +358,10 @@ class ProcessPrediction:
         # 6. Trénink modelu
         print("⏳ Trénuji model...")
         self.train_model(
-            epochs=100,        # počet epoch
-            batch_size=32,    # velikost batchů
+            epochs=30,        # počet epoch
+            batch_size=16,    # velikost batchů
             lr=0.0002,        # learning rate
-            patience=20        # early stopping
+            patience=10        # early stopping
         )
 
         # 7. Vyhodnocení modelu
